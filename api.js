@@ -1,5 +1,5 @@
 const express = require("express");
-const sqlite3 = require('sqlite3').verbose();
+const sqlite3 = require("sqlite3");
 const cors = require("cors");
 const NodeCache = require("node-cache");
 const app = express();
@@ -8,18 +8,18 @@ app.use(cors());
 const args = process.argv.slice(2); // Skip the first two arguments which are node and script file paths
 
 if (args.length < 2) {
-  console.error('Usage: node api.js <port> <databasePath>');
+  console.error("Usage: node api.js <port> <databasePath>");
   process.exit(1);
 }
 
 const port = parseInt(args[0]);
 const databasePath = args[1];
 
-const db = new sqlite3.Database(databasePath, sqlite3.OPEN_READONLY, err => {
+const db = new sqlite3.Database(databasePath, sqlite3.OPEN_READONLY, (err) => {
   if (err) {
-    console.error('Error opening database:', err.message);
+    console.error("Error opening database:", err.message);
   } else {
-    console.log('Connected to the SQLite database');
+    console.log("Connected to the SQLite database");
   }
 });
 
@@ -27,12 +27,12 @@ const cache = new NodeCache({ stdTTL: 60 * 5 });
 
 app.get("/api/panelStatus", (req, res) => {
   const panelNumber = req.query.panelNumber;
-  const query = 'SELECT * FROM PanelStatus WHERE PanelNo = ?';
+  const query = "SELECT * FROM PanelStatus WHERE PanelNo = ?";
 
   db.all(query, [panelNumber], (err, rows) => {
     if (err) {
-      console.error('Error executing query:', err.message);
-      res.status(500).json({ error: 'Internal Server Error' });
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
     } else {
       res.json(rows);
     }
@@ -41,12 +41,140 @@ app.get("/api/panelStatus", (req, res) => {
 
 app.get("/api/latestScore", (req, res) => {
   const panelNumber = req.query.panelNumber;
-  const query = 'SELECT * FROM DisplayScreen WHERE PanelNo = ? ORDER BY LastUpdatedTimestamp DESC LIMIT 1';
+  const query =
+    "SELECT * FROM DisplayScreen WHERE PanelNo = ? ORDER BY LastUpdatedTimestamp DESC LIMIT 1";
 
   db.all(query, [panelNumber], (err, rows) => {
     if (err) {
-      console.error('Error executing query:', err.message);
-      res.status(500).json({ error: 'Internal Server Error' });
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/exerciseNumbers", (req, res) => {
+  const categoryId = req.query.catId;
+  const query =
+    "SELECT ExerciseNumber, RoundName FROM DisplayScreenRoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM(SELECT CompetitorId, Max(ExerciseNumber) Exercises FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY Exercises DESC LIMIT 1)) ORDER BY ExerciseNumber";
+
+  db.all(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/rounds", (req, res) => {
+  const categoryId = req.query.catId;
+  const query = "SELECT * FROM Rounds WHERE CategoryId = ?";
+
+  const cacheKey = `rounds_${categoryId}`;
+  const cachedData = cache.get(cacheKey);
+  if (cachedData) {
+    console.log("Returning cached data");
+    res.json(cachedData);
+    return;
+  }
+
+  db.all(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      cache.set(cacheKey, rows);
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/categories", (req, res) => {
+  const categoryId = req.query.catId;
+  const query = "SELECT * FROM Categories WHERE CatId = ?";
+
+  const cacheKey = `categories_${categoryId}`;
+  const cachedData = cache.get(cacheKey);
+  if (cachedData) {
+    console.log("Returning cached data");
+    res.json(cachedData);
+    return;
+  }
+
+  db.all(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      cache.set(cacheKey, rows);
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/competitorRanks", (req, res) => {
+  const categoryId = req.query.catId;
+  const compType = req.query.compType;
+
+  let query = "";
+  if (compType == 0) {
+    query =
+      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId= ? ORDER BY ZeroRank LIMIT 8";
+  } else {
+    query =
+      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId= ? ORDER BY CumulativeRank LIMIT 8";
+  }
+  db.all(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/qualifyingStartList", (req, res) => {
+  const categoryId = req.query.catId;
+  const query =
+    "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub FROM DisplayScreen WHERE CatId= ? ORDER BY Q1StartNo LIMIT 8";
+
+  db.all(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/competitorRoundTotal", (req, res) => {
+  const competitorId = req.query.competitorId;
+  const query =
+    "SELECT DISTINCT * FROM DisplayScreenRoundTotals WHERE CompetitorId = ? ORDER BY ExerciseNumber";
+
+  db.all(query, [competitorId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+
+
+app.get("/api/displayCategories", (req, res) => {
+  const query = "SELECT * FROM Categories WHERE Categories.Display=1";
+  db.all(query, [], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
     } else {
       res.json(rows);
     }
@@ -65,12 +193,16 @@ app.get("/api/categoryRoundExercises", (req, res) => {
     return;
   }
 
-  const query = 'SELECT * FROM CategoryRoundExercises where CategoryId = "'+categoryId+'" and ExerciseNumber = '+exerciseNumber;
+  const query =
+    'SELECT * FROM CategoryRoundExercises where CategoryId = "' +
+    categoryId +
+    '" and ExerciseNumber = ' +
+    exerciseNumber;
 
   db.all(query, [], (err, rows) => {
     if (err) {
-      console.error('Error executing query:', err.message);
-      res.status(500).json({ error: 'Internal Server Error' });
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
     } else {
       cache.set(cacheKey, rows);
       res.json(rows);
