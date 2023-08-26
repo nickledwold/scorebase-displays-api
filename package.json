@@ -14,5 +14,11 @@
     "express": "^4.18.2",
     "node-cache": "^5.1.2",
     "sqlite3": "^5.1.6"
+  },
+  "bin": "api.js",
+  "pkg": {
+    "assets": [
+      "node_modules/sqlite3/lib/binding/napi-v6-win32-unknown-x64/node_sqlite3.node"
+    ]
   }
 }

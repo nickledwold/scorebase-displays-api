@@ -27,8 +27,12 @@ const cache = new NodeCache({ stdTTL: 60 * 5 });
 
 app.get("/api/panelStatus", (req, res) => {
   const panelNumber = req.query.panelNumber;
-  const query = "SELECT * FROM PanelStatus WHERE PanelNo = ?";
-
+  let query = "";
+  if (panelNumber) {
+    query = "SELECT * FROM PanelStatus WHERE PanelNo = ?";
+  } else {
+    query = "SELECT * FROM PanelStatus";
+  }
   db.all(query, [panelNumber], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
@@ -52,6 +56,14 @@ app.get("/api/latestScore", (req, res) => {
       res.json(rows);
     }
   });
+});
+
+app.get("/api/serverClock", (req, res) => {
+  var currentDate = new Date();
+  var hours = currentDate.getHours().toString().padStart(2, "0");
+  var minutes = currentDate.getMinutes().toString().padStart(2, "0");
+  var serverTime = hours + ":" + minutes;
+  res.json({ time: serverTime });
 });
 
 app.get("/api/exerciseNumbers", (req, res) => {
@@ -94,8 +106,12 @@ app.get("/api/rounds", (req, res) => {
 
 app.get("/api/categories", (req, res) => {
   const categoryId = req.query.catId;
-  const query = "SELECT * FROM Categories WHERE CatId = ?";
-
+  let query = "";
+  if (categoryId) {
+    query = "SELECT * FROM Categories WHERE CatId = ?";
+  } else {
+    query = "SELECT * FROM Categories";
+  }
   const cacheKey = `categories_${categoryId}`;
   const cachedData = cache.get(cacheKey);
   if (cachedData) {
@@ -166,8 +182,6 @@ app.get("/api/competitorRoundTotal", (req, res) => {
     }
   });
 });
-
-
 
 app.get("/api/displayCategories", (req, res) => {
   const query = "SELECT * FROM Categories WHERE Categories.Display=1";
