@@ -18,7 +18,7 @@ const databasePath = args[1];
 const db = sqlite(databasePath, {
   fileMustExist: true,
 });
-db.pragma('journal_mode = WAL');
+db.pragma("journal_mode = WAL");
 
 const cache = new NodeCache({ stdTTL: 60 * 5 });
 
@@ -257,6 +257,28 @@ app.get("/api/categoryRoundExercises", (req, res) => {
       }
     }
   );
+});
+
+app.get("/api/liveResults", (req, res) => {
+  const categoryId = req.query.catId;
+  const compType = req.query.compType;
+
+  let query = "";
+  if (compType == 0) {
+    query =
+      "SELECT * FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY (CASE WHEN ZeroRank IS NULL THEN 1 ELSE 0 END), ZeroRank, Q1Flight, Q1StartNo";
+  } else {
+    query =
+      "SELECT * FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY (CASE WHEN CumulativeRank IS NULL THEN 1 ELSE 0 END), CumulativeRank, Q1Flight, Q1StartNo";
+  }
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
 });
 
 app.listen(port, () => {
