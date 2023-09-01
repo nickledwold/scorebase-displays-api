@@ -1,5 +1,5 @@
 const express = require("express");
-const sqlite3 = require("sqlite3");
+const sqlite = require("better-sqlite3");
 const cors = require("cors");
 const NodeCache = require("node-cache");
 const app = express();
@@ -15,13 +15,10 @@ if (args.length < 2) {
 const port = parseInt(args[0]);
 const databasePath = args[1];
 
-const db = new sqlite3.Database(databasePath, sqlite3.OPEN_READONLY, (err) => {
-  if (err) {
-    console.error("Error opening database:", err.message);
-  } else {
-    console.log("Connected to the SQLite database");
-  }
+const db = sqlite(databasePath, {
+  fileMustExist: true,
 });
+db.pragma('journal_mode = WAL');
 
 const cache = new NodeCache({ stdTTL: 60 * 5 });
 
@@ -41,30 +38,41 @@ function performDatabaseQueryWithRetry(
     return;
   }
 
-  db.all(query, params, (err, rows) => {
-    if (err) {
-      if (retryCount == MAX_RETRY_ATTEMPTS) {
-        console.error(`Error executing query: ${query}, Error: ${err.message}`);
-        // Retry the query with a delay
-        console.log(`Retry count ${retryCount}`);
-      }
-      setTimeout(() => {
-        performDatabaseQueryWithRetry(query, params, callback, retryCount + 1);
-      }, RETRY_DELAY_MS);
-    } else {
-      callback(null, rows);
+  try {
+    const stmt = db.prepare(query);
+    const rows = stmt.all(params);
+    callback(null, rows);
+  } catch (err) {
+    if (retryCount == MAX_RETRY_ATTEMPTS) {
+      console.error(`Error executing query: ${query}, Error: ${err.message}`);
+      // Retry the query with a delay
+      console.log(`Retry count ${retryCount}`);
     }
-  });
+    setTimeout(() => {
+      performDatabaseQueryWithRetry(query, params, callback, retryCount + 1);
+    }, RETRY_DELAY_MS);
+  }
 }
+
+app.get("/api/serverClock", (req, res) => {
+  var currentDate = new Date();
+  var hours = currentDate.getHours().toString().padStart(2, "0");
+  var minutes = currentDate.getMinutes().toString().padStart(2, "0");
+  var serverTime = hours + ":" + minutes;
+  res.json({ time: serverTime });
+});
+
 app.get("/api/panelStatus", (req, res) => {
   const panelNumber = req.query.panelNumber;
   let query = "";
+  let params = [];
   if (panelNumber) {
     query = "SELECT * FROM PanelStatus WHERE PanelNo = ?";
+    params = [panelNumber];
   } else {
     query = "SELECT * FROM PanelStatus";
   }
-  performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
+  performDatabaseQueryWithRetry(query, params, (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -87,14 +95,6 @@ app.get("/api/latestScore", (req, res) => {
       res.json(rows);
     }
   });
-});
-
-app.get("/api/serverClock", (req, res) => {
-  var currentDate = new Date();
-  var hours = currentDate.getHours().toString().padStart(2, "0");
-  var minutes = currentDate.getMinutes().toString().padStart(2, "0");
-  var serverTime = hours + ":" + minutes;
-  res.json({ time: serverTime });
 });
 
 app.get("/api/exerciseNumbers", (req, res) => {
@@ -137,8 +137,10 @@ app.get("/api/rounds", (req, res) => {
 app.get("/api/categories", (req, res) => {
   const categoryId = req.query.catId;
   let query = "";
+  let params = [];
   if (categoryId) {
     query = "SELECT * FROM Categories WHERE CatId = ?";
+    params = [categoryId];
   } else {
     query = "SELECT * FROM Categories";
   }
@@ -149,7 +151,7 @@ app.get("/api/categories", (req, res) => {
     return;
   }
 
-  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, params, (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -167,10 +169,10 @@ app.get("/api/competitorRanks", (req, res) => {
   let query = "";
   if (compType == 0) {
     query =
-      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId= ? ORDER BY ZeroRank LIMIT 8";
+      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY ZeroRank LIMIT 8";
   } else {
     query =
-      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId= ? ORDER BY CumulativeRank LIMIT 8";
+      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY CumulativeRank LIMIT 8";
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -198,7 +200,9 @@ app.get("/api/qualifyingStartList", (req, res) => {
 });
 
 app.get("/api/competitorRoundTotal", (req, res) => {
-  const competitorId = req.query.competitorId;
+  const competitorId = !isNaN(req.query.competitorId)
+    ? Number(req.query.competitorId)
+    : "";
   const query =
     "SELECT DISTINCT * FROM DisplayScreenRoundTotals WHERE CompetitorId = ? ORDER BY ExerciseNumber";
 
@@ -226,7 +230,9 @@ app.get("/api/displayCategories", (req, res) => {
 
 app.get("/api/categoryRoundExercises", (req, res) => {
   const categoryId = req.query.catId;
-  const exerciseNumber = req.query.exerciseNumber;
+  const exerciseNumber = !isNaN(req.query.exerciseNumber)
+    ? Number(req.query.exerciseNumber)
+    : "";
   const cacheKey = `categoryRoundExercises_${categoryId}_${exerciseNumber}`;
 
   const cachedData = cache.get(cacheKey);
@@ -236,20 +242,21 @@ app.get("/api/categoryRoundExercises", (req, res) => {
   }
 
   const query =
-    'SELECT * FROM CategoryRoundExercises where CategoryId = "' +
-    categoryId +
-    '" and ExerciseNumber = ' +
-    exerciseNumber;
+    "SELECT * FROM CategoryRoundExercises where CategoryId = ? and ExerciseNumber = ?";
 
-  performDatabaseQueryWithRetry(query, [], (err, rows) => {
-    if (err) {
-      console.error("Error executing query:", err.message);
-      res.status(500).json({ error: "Internal Server Error" });
-    } else {
-      cache.set(cacheKey, rows);
-      res.json(rows);
+  performDatabaseQueryWithRetry(
+    query,
+    [categoryId, exerciseNumber],
+    (err, rows) => {
+      if (err) {
+        console.error("Error executing query:", err.message);
+        res.status(500).json({ error: "Internal Server Error" });
+      } else {
+        cache.set(cacheKey, rows);
+        res.json(rows);
+      }
     }
-  });
+  );
 });
 
 app.listen(port, () => {
