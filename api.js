@@ -25,6 +25,37 @@ const db = new sqlite3.Database(databasePath, sqlite3.OPEN_READONLY, (err) => {
 
 const cache = new NodeCache({ stdTTL: 60 * 5 });
 
+const MAX_RETRY_ATTEMPTS = 3; // Maximum number of retry attempts
+const RETRY_DELAY_MS = 500; // Delay between retry attempts in milliseconds
+
+// Function to perform a database query with retries
+function performDatabaseQueryWithRetry(
+  query,
+  params,
+  callback,
+  retryCount = 0
+) {
+  if (retryCount > MAX_RETRY_ATTEMPTS) {
+    console.error(`Max retry attempts reached for query: ${query}`);
+    callback(new Error("Database query failed after max retry attempts."));
+    return;
+  }
+
+  db.all(query, params, (err, rows) => {
+    if (err) {
+      if (retryCount == MAX_RETRY_ATTEMPTS) {
+        console.error(`Error executing query: ${query}, Error: ${err.message}`);
+        // Retry the query with a delay
+        console.log(`Retry count ${retryCount}`);
+      }
+      setTimeout(() => {
+        performDatabaseQueryWithRetry(query, params, callback, retryCount + 1);
+      }, RETRY_DELAY_MS);
+    } else {
+      callback(null, rows);
+    }
+  });
+}
 app.get("/api/panelStatus", (req, res) => {
   const panelNumber = req.query.panelNumber;
   let query = "";
@@ -33,7 +64,7 @@ app.get("/api/panelStatus", (req, res) => {
   } else {
     query = "SELECT * FROM PanelStatus";
   }
-  db.all(query, [panelNumber], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -48,7 +79,7 @@ app.get("/api/latestScore", (req, res) => {
   const query =
     "SELECT * FROM DisplayScreen WHERE PanelNo = ? ORDER BY LastUpdatedTimestamp DESC LIMIT 1";
 
-  db.all(query, [panelNumber], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -71,7 +102,7 @@ app.get("/api/exerciseNumbers", (req, res) => {
   const query =
     "SELECT ExerciseNumber, RoundName FROM DisplayScreenRoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM(SELECT CompetitorId, Max(ExerciseNumber) Exercises FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY Exercises DESC LIMIT 1)) ORDER BY ExerciseNumber";
 
-  db.all(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -88,12 +119,11 @@ app.get("/api/rounds", (req, res) => {
   const cacheKey = `rounds_${categoryId}`;
   const cachedData = cache.get(cacheKey);
   if (cachedData) {
-    console.log("Returning cached data");
     res.json(cachedData);
     return;
   }
 
-  db.all(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -115,12 +145,11 @@ app.get("/api/categories", (req, res) => {
   const cacheKey = `categories_${categoryId}`;
   const cachedData = cache.get(cacheKey);
   if (cachedData) {
-    console.log("Returning cached data");
     res.json(cachedData);
     return;
   }
 
-  db.all(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -143,7 +172,7 @@ app.get("/api/competitorRanks", (req, res) => {
     query =
       "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId= ? ORDER BY CumulativeRank LIMIT 8";
   }
-  db.all(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -158,7 +187,7 @@ app.get("/api/qualifyingStartList", (req, res) => {
   const query =
     "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub FROM DisplayScreen WHERE CatId= ? ORDER BY Q1StartNo LIMIT 8";
 
-  db.all(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -173,7 +202,7 @@ app.get("/api/competitorRoundTotal", (req, res) => {
   const query =
     "SELECT DISTINCT * FROM DisplayScreenRoundTotals WHERE CompetitorId = ? ORDER BY ExerciseNumber";
 
-  db.all(query, [competitorId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [competitorId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -185,7 +214,7 @@ app.get("/api/competitorRoundTotal", (req, res) => {
 
 app.get("/api/displayCategories", (req, res) => {
   const query = "SELECT * FROM Categories WHERE Categories.Display=1";
-  db.all(query, [], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -202,7 +231,6 @@ app.get("/api/categoryRoundExercises", (req, res) => {
 
   const cachedData = cache.get(cacheKey);
   if (cachedData) {
-    console.log("Returning cached data");
     res.json(cachedData);
     return;
   }
@@ -213,7 +241,7 @@ app.get("/api/categoryRoundExercises", (req, res) => {
     '" and ExerciseNumber = ' +
     exerciseNumber;
 
-  db.all(query, [], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
