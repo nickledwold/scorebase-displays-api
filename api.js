@@ -337,9 +337,7 @@ app.get("/api/onlineResults", (req, res) => {
                                     exercise.CompetitorId ===
                                     competitorData.CompetitorId
                                 );
-                                if (competitorExercises.length > 0)
-                                  competitorData.Exercises =
-                                    competitorExercises;
+                                competitorData.Exercises = competitorExercises;
                                 const competitorRoundTotals =
                                   roundTotalRows.filter(
                                     (roundTotal) =>
@@ -369,13 +367,32 @@ app.get("/api/onlineResults", (req, res) => {
                                     const exerciseData =
                                       competitorData.Exercises[dataIndex];
 
-                                    const exerciseMedians =
+                                    let exerciseMedians =
                                       competitorMedians.filter(
                                         (median) =>
                                           median.ExerciseNumber ===
                                           exerciseData.ExerciseNumber
                                       );
                                     if (exerciseMedians.length > 0) {
+                                      exerciseMedians = exerciseMedians.map(
+                                        (median) => {
+                                          return {
+                                            ...median,
+                                            DeductionNumber:
+                                              (categoryId[0] == "I" ||
+                                                categoryId[0] == "S") &&
+                                              median.DeductionNumber == 11
+                                                ? "L"
+                                                : categoryId[0] == "U" &&
+                                                  median.DeductionNumber == 9
+                                                ? "L"
+                                                : categoryId[0] == "D" &&
+                                                  median.DeductionNumber == 3
+                                                ? "L"
+                                                : median.DeductionNumber,
+                                          };
+                                        }
+                                      );
                                       exerciseData.Medians = exerciseMedians;
                                     }
                                     const exerciseVideos =
@@ -483,25 +500,6 @@ app.get("/api/onlineMedians", (req, res) => {
     }
   });
 });*/
-
-app.get("/api/onlineRounds", (req, res) => {
-  const categoryId = req.query.catId;
-  const query = "SELECT * FROM Rounds WHERE CategoryId = ?";
-  const cacheKey = `rounds_${categoryId}`;
-  const cachedData = cache.get(cacheKey);
-  if (cachedData) {
-    res.json(cachedData);
-    return;
-  }
-  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
-    if (err) {
-      console.error("Error executing query:", err.message);
-      res.status(500).json({ error: "Internal Server Error" });
-    } else {
-      res.json(rows);
-    }
-  });
-});
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
