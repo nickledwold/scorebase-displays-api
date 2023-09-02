@@ -276,6 +276,35 @@ app.get("/api/liveResults", (req, res) => {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
     } else {
+      result = {};
+      i = 0;
+
+      for (let dataIndex = 0; dataIndex < rows.length; dataIndex++) {
+        const competitorData = rows[dataIndex];
+        const exercises = [];
+        for (let i = 1; i <= 5; i++) {
+          const exercise = {
+            ExerciseNumber: i,
+            Execution: competitorData[`Ex${i}E`],
+            Difficulty: competitorData[`Ex${i}D`],
+            HorizontalDisplacement: competitorData[`Ex${i}HD`],
+            TimeOfFlight: competitorData[`Ex${i}ToF`],
+            Synchronisation: competitorData[`Ex${i}S`],
+            Penalty: competitorData[`Ex${i}Pen`],
+            Total: competitorData[`Ex${i}Total`],
+            Rank: competitorData[`Ex${i}Rank`],
+          };
+          const keysToRemove = [`Ex${i}E`, `Ex${i}D`, `Ex${i}HD`, `Ex${i}ToF`, `Ex${i}S`, `Ex${i}Pen`, `Ex${i}Total`, `Ex${i}Rank`];
+          for (const key of keysToRemove) {
+            if (competitorData.hasOwnProperty(key)) {
+              delete competitorData[key];
+            }
+          }
+          if (exercise.Rank != null || exercise.Rank != undefined)
+            exercises.push(exercise);
+        }
+        competitorData.Exercises = exercises;
+      }
       res.json(rows);
     }
   });
