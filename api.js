@@ -259,7 +259,7 @@ app.get("/api/categoryRoundExercises", (req, res) => {
   );
 });
 
-app.get("/api/liveResults", (req, res) => {
+app.get("/api/onlineResults", (req, res) => {
   const categoryId = req.query.catId;
   const compType = req.query.compType;
 
@@ -271,40 +271,233 @@ app.get("/api/liveResults", (req, res) => {
     query =
       "SELECT * FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY (CASE WHEN CumulativeRank IS NULL THEN 1 ELSE 0 END), CumulativeRank, Q1Flight, Q1StartNo";
   }
+  performDatabaseQueryWithRetry(query, [categoryId], (err, competitorRows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      query =
+        "SELECT * FROM DisplayScreenExerciseTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+      performDatabaseQueryWithRetry(
+        query,
+        [categoryId],
+        (err, exerciseRows) => {
+          if (err) {
+            console.error("Error executing query:", err.message);
+            res.status(500).json({ error: "Internal Server Error" });
+          } else {
+            query =
+              "SELECT * FROM RoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+            performDatabaseQueryWithRetry(
+              query,
+              [categoryId],
+              (err, roundTotalRows) => {
+                if (err) {
+                  console.error("Error executing query:", err.message);
+                  res.status(500).json({ error: "Internal Server Error" });
+                } else {
+                  query =
+                    "SELECT * FROM ExerciseVideos WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+                  performDatabaseQueryWithRetry(
+                    query,
+                    [categoryId],
+                    (err, videoRows) => {
+                      if (err) {
+                        console.error("Error executing query:", err.message);
+                        res
+                          .status(500)
+                          .json({ error: "Internal Server Error" });
+                      } else {
+                        query =
+                          "SELECT * FROM ExerciseMedians where CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1));";
+                        performDatabaseQueryWithRetry(
+                          query,
+                          [categoryId],
+                          (err, medianRows) => {
+                            if (err) {
+                              console.error(
+                                "Error executing query:",
+                                err.message
+                              );
+                              res
+                                .status(500)
+                                .json({ error: "Internal Server Error" });
+                            } else {
+                              result = {};
+                              i = 0;
+                              for (
+                                let dataIndex = 0;
+                                dataIndex < competitorRows.length;
+                                dataIndex++
+                              ) {
+                                const competitorData =
+                                  competitorRows[dataIndex];
+                                const competitorExercises = exerciseRows.filter(
+                                  (exercise) =>
+                                    exercise.CompetitorId ===
+                                    competitorData.CompetitorId
+                                );
+                                if (competitorExercises.length > 0)
+                                  competitorData.Exercises =
+                                    competitorExercises;
+                                const competitorRoundTotals =
+                                  roundTotalRows.filter(
+                                    (roundTotal) =>
+                                      roundTotal.CompetitorId ===
+                                      competitorData.CompetitorId
+                                  );
+                                if (competitorRoundTotals.length > 0) {
+                                  competitorData.RoundTotals =
+                                    competitorRoundTotals;
+                                }
+                                const competitorVideos = videoRows.filter(
+                                  (video) =>
+                                    video.CompetitorId ===
+                                    competitorData.CompetitorId
+                                );
+                                const competitorMedians = medianRows.filter(
+                                  (median) =>
+                                    median.CompetitorId ===
+                                    competitorData.CompetitorId
+                                );
+                                if (competitorExercises.length > 0) {
+                                  for (
+                                    let dataIndex = 0;
+                                    dataIndex < competitorData.Exercises.length;
+                                    dataIndex++
+                                  ) {
+                                    const exerciseData =
+                                      competitorData.Exercises[dataIndex];
+
+                                    const exerciseMedians =
+                                      competitorMedians.filter(
+                                        (median) =>
+                                          median.ExerciseNumber ===
+                                          exerciseData.ExerciseNumber
+                                      );
+                                    if (exerciseMedians.length > 0) {
+                                      exerciseData.Medians = exerciseMedians;
+                                    }
+                                    const exerciseVideos =
+                                      competitorVideos.filter(
+                                        (video) =>
+                                          video.ExerciseNumber ===
+                                          exerciseData.ExerciseNumber
+                                      );
+                                    if (exerciseVideos.length > 0) {
+                                      exerciseData.Videos = exerciseVideos;
+                                    }
+                                  }
+                                }
+                                for (let i = 1; i <= 5; i++) {
+                                  const keysToRemove = [
+                                    `Ex${i}E`,
+                                    `Ex${i}D`,
+                                    `Ex${i}HD`,
+                                    `Ex${i}ToF`,
+                                    `Ex${i}S`,
+                                    `Ex${i}Pen`,
+                                    `Ex${i}Total`,
+                                    `Ex${i}Rank`,
+                                  ];
+                                  for (const key of keysToRemove) {
+                                    if (competitorData.hasOwnProperty(key)) {
+                                      delete competitorData[key];
+                                    }
+                                  }
+                                }
+                              }
+                              res.json(competitorRows);
+                            }
+                          }
+                        );
+                      }
+                    }
+                  );
+                }
+              }
+            );
+          }
+        }
+      );
+    }
+  });
+});
+
+/*app.get("/api/onlineExerciseTotals", (req, res) => {
+  const categoryId = req.query.catId;
+  const query =
+    "SELECT * FROM DisplayScreenExerciseTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
     } else {
-      result = {};
-      i = 0;
+      res.json(rows);
+    }
+  });
+});
 
-      for (let dataIndex = 0; dataIndex < rows.length; dataIndex++) {
-        const competitorData = rows[dataIndex];
-        const exercises = [];
-        for (let i = 1; i <= 5; i++) {
-          const exercise = {
-            ExerciseNumber: i,
-            Execution: competitorData[`Ex${i}E`],
-            Difficulty: competitorData[`Ex${i}D`],
-            HorizontalDisplacement: competitorData[`Ex${i}HD`],
-            TimeOfFlight: competitorData[`Ex${i}ToF`],
-            Synchronisation: competitorData[`Ex${i}S`],
-            Penalty: competitorData[`Ex${i}Pen`],
-            Total: competitorData[`Ex${i}Total`],
-            Rank: competitorData[`Ex${i}Rank`],
-          };
-          const keysToRemove = [`Ex${i}E`, `Ex${i}D`, `Ex${i}HD`, `Ex${i}ToF`, `Ex${i}S`, `Ex${i}Pen`, `Ex${i}Total`, `Ex${i}Rank`];
-          for (const key of keysToRemove) {
-            if (competitorData.hasOwnProperty(key)) {
-              delete competitorData[key];
-            }
-          }
-          if (exercise.Rank != null || exercise.Rank != undefined)
-            exercises.push(exercise);
-        }
-        competitorData.Exercises = exercises;
-      }
+app.get("/api/onlineRoundTotals", (req, res) => {
+  const categoryId = req.query.catId;
+  const query =
+    "SELECT * FROM RoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1));";
+
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/onlineVideos", (req, res) => {
+  const categoryId = req.query.catId;
+  const query =
+    "SELECT * FROM ExerciseVideos WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/onlineMedians", (req, res) => {
+  const categoryId = req.query.catId;
+  const query =
+    "SELECT * FROM ExerciseMedians where CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1));";
+
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});*/
+
+app.get("/api/onlineRounds", (req, res) => {
+  const categoryId = req.query.catId;
+  const query = "SELECT * FROM Rounds WHERE CategoryId = ?";
+  const cacheKey = `rounds_${categoryId}`;
+  const cachedData = cache.get(cacheKey);
+  if (cachedData) {
+    res.json(cachedData);
+    return;
+  }
+  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
       res.json(rows);
     }
   });
