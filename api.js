@@ -116,19 +116,11 @@ app.get("/api/rounds", (req, res) => {
   const categoryId = req.query.catId;
   const query = "SELECT * FROM Rounds WHERE CategoryId = ?";
 
-  const cacheKey = `rounds_${categoryId}`;
-  const cachedData = cache.get(cacheKey);
-  if (cachedData) {
-    res.json(cachedData);
-    return;
-  }
-
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
     } else {
-      cache.set(cacheKey, rows);
       res.json(rows);
     }
   });
