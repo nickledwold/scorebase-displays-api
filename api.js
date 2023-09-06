@@ -433,11 +433,11 @@ app.get("/api/onlineResults", (req, res) => {
   });
 });
 
-/*app.get("/api/onlineExerciseTotals", (req, res) => {
+app.get("/api/onlineStartLists", (req, res) => {
   const categoryId = req.query.catId;
   const query =
-    "SELECT * FROM DisplayScreenExerciseTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
-
+    "";
+  //TODO: ADD QUERY FOR ONLINE START LISTS
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
@@ -447,51 +447,6 @@ app.get("/api/onlineResults", (req, res) => {
     }
   });
 });
-
-app.get("/api/onlineRoundTotals", (req, res) => {
-  const categoryId = req.query.catId;
-  const query =
-    "SELECT * FROM RoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1));";
-
-  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
-    if (err) {
-      console.error("Error executing query:", err.message);
-      res.status(500).json({ error: "Internal Server Error" });
-    } else {
-      res.json(rows);
-    }
-  });
-});
-
-app.get("/api/onlineVideos", (req, res) => {
-  const categoryId = req.query.catId;
-  const query =
-    "SELECT * FROM ExerciseVideos WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
-
-  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
-    if (err) {
-      console.error("Error executing query:", err.message);
-      res.status(500).json({ error: "Internal Server Error" });
-    } else {
-      res.json(rows);
-    }
-  });
-});
-
-app.get("/api/onlineMedians", (req, res) => {
-  const categoryId = req.query.catId;
-  const query =
-    "SELECT * FROM ExerciseMedians where CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1));";
-
-  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
-    if (err) {
-      console.error("Error executing query:", err.message);
-      res.status(500).json({ error: "Internal Server Error" });
-    } else {
-      res.json(rows);
-    }
-  });
-});*/
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);

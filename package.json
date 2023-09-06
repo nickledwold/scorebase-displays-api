@@ -18,7 +18,7 @@
   "bin": "api.js",
   "pkg": {
     "assets": [
-      "node_modules/sqlite3/lib/binding/napi-v6-win32-unknown-x64/node_sqlite3.node"
+      "node_modules/better-sqlite3/build/Release/better_sqlite3.node"
     ]
   }
 }
