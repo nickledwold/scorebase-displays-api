@@ -97,6 +97,128 @@ app.get("/api/latestScore", (req, res) => {
   });
 });
 
+app.get("/api/latest", (req, res) => {
+  const panelNumber = req.query.panelNumber;
+  const query =
+    "SELECT * FROM DisplayScreen WHERE PanelNo = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY LastUpdatedTimestamp DESC LIMIT 1";
+
+  performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      if (rows.length > 0) {
+        const competitorData = rows[0];
+
+        const categoryId = competitorData.CatId;
+        const cacheKey = `categoryRoundExercises_${categoryId}`;
+
+        let categoryRoundExerciseRows = [];
+
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+          categoryRoundExerciseRows = cachedData;
+        } else {
+          const query =
+            "SELECT * FROM CategoryRoundExercises where CategoryId = ?";
+
+          performDatabaseQueryWithRetry(query, [categoryId], (err, rows2) => {
+            if (err) {
+              console.error("Error executing query:", err.message);
+              res.status(500).json({ error: "Internal Server Error" });
+            } else {
+              cache.set(cacheKey, rows2);
+              categoryRoundExerciseRows = rows2;
+            }
+          });
+        }
+        const exercises = [
+          { exerciseNumber: 5, propertyPrefix: "Ex5" },
+          { exerciseNumber: 4, propertyPrefix: "Ex4" },
+          { exerciseNumber: 3, propertyPrefix: "Ex3" },
+          { exerciseNumber: 2, propertyPrefix: "Ex2" },
+          { exerciseNumber: 1, propertyPrefix: "Ex1" },
+        ];
+
+        let tempLatestExercise = {};
+
+        for (const exercise of exercises) {
+          if (!exercise) continue;
+          const totalProperty = `${exercise.propertyPrefix}Total`;
+          if (!isValueNullOrEmpty(competitorData[totalProperty])) {
+            let categoryRoundExercise = categoryRoundExerciseRows.find(
+              (categoryRoundExercise) =>
+                categoryRoundExercise.ExerciseNumber === exercise.exerciseNumber
+            );
+            tempLatestExercise = {
+              Exercise: exercise.exerciseNumber,
+              RoundName: categoryRoundExercise.RoundName,
+              Execution: competitorData[`${exercise.propertyPrefix}E`],
+              Difficulty: competitorData[`${exercise.propertyPrefix}D`],
+              HorizontalDisplacement:
+                competitorData[`${exercise.propertyPrefix}HD`],
+              TimeOfFlight: competitorData[`${exercise.propertyPrefix}ToF`],
+              Synchronisation: competitorData[`${exercise.propertyPrefix}S`],
+              Penalty: competitorData[`${exercise.propertyPrefix}Pen`],
+              Total: competitorData[totalProperty],
+            };
+            break;
+          }
+        }
+        competitorData.Exercise = tempLatestExercise;
+        for (let i = 1; i <= 5; i++) {
+          const keysToRemove = [
+            `Ex${i}E`,
+            `Ex${i}D`,
+            `Ex${i}HD`,
+            `Ex${i}ToF`,
+            `Ex${i}S`,
+            `Ex${i}Pen`,
+            `Ex${i}Total`,
+            `Ex${i}Rank`,
+          ];
+          for (const key of keysToRemove) {
+            if (competitorData.hasOwnProperty(key)) {
+              delete competitorData[key];
+            }
+          }
+        }
+        if (!competitorData.ZeroRank) {
+          competitorData.Rank = "-";
+        } else {
+          if (competitorData.CompType === 0 && competitorData.F1Total > 0) {
+            competitorData.Rank = competitorData.DisplayZeroRank;
+          } else {
+            competitorData.Rank = competitorData.DisplayCumulativeRank;
+          }
+        }
+        const keysToRemove = [
+          `ZeroRank`,
+          `CumulativeRank`,
+          `DisplayZeroRank`,
+          `DisplayCumulativeRank`,
+          `Club`,
+          `Q1StartNo`,
+          `Q1Flight`,
+          `Q1Scoring`,
+        ];
+        for (const key of keysToRemove) {
+          if (competitorData.hasOwnProperty(key)) {
+            delete competitorData[key];
+          }
+        }
+        res.json(competitorData);
+      } else {
+        res.json(new {}());
+      }
+    }
+  });
+});
+
+function isValueNullOrEmpty(value) {
+  return (value == null || value == "" || value == undefined) && value != 0;
+}
+
 app.get("/api/exerciseNumbers", (req, res) => {
   const categoryId = req.query.catId;
   const query =
@@ -161,10 +283,10 @@ app.get("/api/competitorRanks", (req, res) => {
   let query = "";
   if (compType == 0) {
     query =
-      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY ZeroRank LIMIT 8";
+      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, Nation, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY ZeroRank LIMIT 8";
   } else {
     query =
-      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY CumulativeRank LIMIT 8";
+      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, Nation, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY CumulativeRank LIMIT 8";
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -179,9 +301,25 @@ app.get("/api/competitorRanks", (req, res) => {
 app.get("/api/qualifyingStartList", (req, res) => {
   const categoryId = req.query.catId;
   const query =
-    "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub FROM DisplayScreen WHERE CatId= ? ORDER BY Q1StartNo LIMIT 8";
+    "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub FROM DisplayScreen WHERE CatId= ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY Q1Flight, Q1StartNo LIMIT 8";
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/roundStartList", (req, res) => {
+  const categoryId = req.query.catId;
+  const roundName = req.query.roundName;
+  const query =
+    "SELECT CompetitorId FROM RoundCompetitors rc INNER JOIN Rounds r on rc.RoundId = r.RoundId WHERE CategoryId = ? and RoundName = ? ORDER BY FlightId, StartNo";
+
+  performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
@@ -435,8 +573,7 @@ app.get("/api/onlineResults", (req, res) => {
 
 app.get("/api/onlineStartLists", (req, res) => {
   const categoryId = req.query.catId;
-  const query =
-    "";
+  const query = "";
   //TODO: ADD QUERY FOR ONLINE START LISTS
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
