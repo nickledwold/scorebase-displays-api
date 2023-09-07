@@ -301,7 +301,7 @@ app.get("/api/competitorRanks", (req, res) => {
 app.get("/api/qualifyingStartList", (req, res) => {
   const categoryId = req.query.catId;
   const query =
-    "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, DisplayClub FROM DisplayScreen WHERE CatId= ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY Q1Flight, Q1StartNo LIMIT 8";
+    "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, Nation, DisplayClub FROM DisplayScreen WHERE CatId= ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY Q1Flight, Q1StartNo LIMIT 8";
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
