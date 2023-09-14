@@ -18,7 +18,6 @@ const databasePath = args[1];
 const db = sqlite(databasePath, {
   fileMustExist: true,
 });
-db.pragma("journal_mode = WAL");
 
 const cache = new NodeCache({ stdTTL: 60 * 5 });
 
