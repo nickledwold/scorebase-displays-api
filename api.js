@@ -328,6 +328,22 @@ app.get("/api/roundStartList", (req, res) => {
   });
 });
 
+app.get("/api/roundStartListCompetitors", (req, res) => {
+  const categoryId = req.query.catId;
+  const roundName = req.query.roundName;
+  const query =
+    "SELECT c.FirstName1, c.FirstName2, c.Surname1, c.Surname2, c.DisplayClub FROM Competitors c INNER JOIN RoundCompetitors rc on c.CompetitorId = rc.CompetitorId INNER JOIN Rounds r on rc.RoundId = r.RoundId and r.CategoryId = ? and r.RoundName = ?  INNER JOIN Flights f on f.FlightId = rc.FlightId ORDER BY f.flightNumber, rc.StartNo";
+
+  performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
 app.get("/api/competitorRoundTotal", (req, res) => {
   const competitorId = !isNaN(req.query.competitorId)
     ? Number(req.query.competitorId)
@@ -570,11 +586,11 @@ app.get("/api/onlineResults", (req, res) => {
   });
 });
 
-app.get("/api/onlineStartLists", (req, res) => {
+app.get("/api/startListRounds", (req, res) => {
   const categoryId = req.query.catId;
-  const query = "";
+  const query = "SELECT r.CategoryId, r.RoundName, c.Discipline, c.Category FROM Rounds r INNER JOIN Categories c on r.CategoryId = c.CatId WHERE r.roundOrder = 1 OR (r.roundOrder > 1 AND EXISTS (SELECT 1 FROM Rounds prev WHERE prev.CategoryId = r.CategoryId AND prev.roundOrder = r.roundOrder - 1 AND prev.SignedOff = 1))";
   //TODO: ADD QUERY FOR ONLINE START LISTS
-  performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
+  performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
