@@ -154,6 +154,7 @@ app.get("/api/latest", (req, res) => {
               RoundName: categoryRoundExercise.RoundName,
               Execution: competitorData[`${exercise.propertyPrefix}E`],
               Difficulty: competitorData[`${exercise.propertyPrefix}D`],
+              Bonus: competitorData[`${exercise.propertyPrefix}B`],
               HorizontalDisplacement:
                 competitorData[`${exercise.propertyPrefix}HD`],
               TimeOfFlight: competitorData[`${exercise.propertyPrefix}ToF`],
@@ -169,6 +170,7 @@ app.get("/api/latest", (req, res) => {
           const keysToRemove = [
             `Ex${i}E`,
             `Ex${i}D`,
+            `Ex${i}B`,
             `Ex${i}HD`,
             `Ex${i}ToF`,
             `Ex${i}S`,
@@ -208,7 +210,7 @@ app.get("/api/latest", (req, res) => {
         }
         res.json(competitorData);
       } else {
-        res.json(new {}());
+        res.json({});
       }
     }
   });
@@ -555,6 +557,7 @@ app.get("/api/onlineResults", (req, res) => {
                                   const keysToRemove = [
                                     `Ex${i}E`,
                                     `Ex${i}D`,
+                                    `Ex${i}B`,
                                     `Ex${i}HD`,
                                     `Ex${i}ToF`,
                                     `Ex${i}S`,
