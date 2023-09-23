@@ -237,7 +237,7 @@ app.get("/api/exerciseNumbers", (req, res) => {
 
 app.get("/api/rounds", (req, res) => {
   const categoryId = req.query.catId;
-  const query = "SELECT * FROM Rounds WHERE CategoryId = ?";
+  const query = "SELECT * FROM Rounds WHERE CategoryId = ?  ORDER BY RoundOrder";
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -590,9 +590,19 @@ app.get("/api/onlineResults", (req, res) => {
 });
 
 app.get("/api/startListRounds", (req, res) => {
-  const categoryId = req.query.catId;
-  const query = "SELECT r.CategoryId, r.RoundName, c.Discipline, c.Category FROM Rounds r INNER JOIN Categories c on r.CategoryId = c.CatId WHERE r.roundOrder = 1 OR (r.roundOrder > 1 AND EXISTS (SELECT 1 FROM Rounds prev WHERE prev.CategoryId = r.CategoryId AND prev.roundOrder = r.roundOrder - 1 AND prev.SignedOff = 1))";
-  //TODO: ADD QUERY FOR ONLINE START LISTS
+  const query = "SELECT r.CategoryId, r.RoundName, c.Discipline, c.Category, r1.NumberOfRounds FROM Rounds r INNER JOIN Categories c on r.CategoryId = c.CatId INNER JOIN (SELECT DISTINCT CategoryId, Count(*) NumberOfRounds FROM Rounds GROUP BY CategoryId) r1 on r.CategoryId = r1.CategoryId WHERE r.roundOrder = 1 OR (r.roundOrder > 1 AND EXISTS (SELECT 1 FROM Rounds prev WHERE prev.CategoryId = r.CategoryId AND prev.roundOrder = r.roundOrder - 1 AND prev.SignedOff = 1)) order by r.CategoryId, r.roundOrder";
+  performDatabaseQueryWithRetry(query, [], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/eventInfo", (req, res) => {
+  const query = "SELECT * FROM Event";
   performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
