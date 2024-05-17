@@ -1,5 +1,5 @@
 const express = require("express");
-const sqlite = require("better-sqlite3");
+const { Pool } = require("pg");
 const cors = require("cors");
 const NodeCache = require("node-cache");
 const app = express();
@@ -7,16 +7,29 @@ app.use(cors());
 
 const args = process.argv.slice(2); // Skip the first two arguments which are node and script file paths
 
-if (args.length < 2) {
-  console.error("Usage: node api.js <port> <databasePath>");
+if (args.length < 6) {
+  console.error("Usage: node api.js <port> <dbport> <host> <user> <database> <pw> <schema>");
   process.exit(1);
 }
 
 const port = parseInt(args[0]);
-const databasePath = args[1];
+const dbport = parseInt(args[1]);
+const host = args[2];
+const user = args[3];
+const database = args[4];
+const password = args[5];
+const schema = args[6];
 
-const db = sqlite(databasePath, {
-  fileMustExist: true,
+/*const pool = new Pool({
+  connectionString,
+});*/
+
+const pool = new Pool({
+  user: user,
+  host: host, // Typically 'localhost' if running on the same machine
+  database: database,
+  password: password, // Omit this if not using password authentication
+  port: dbport, // PostgreSQL default port
 });
 
 const cache = new NodeCache({ stdTTL: 60 * 5 });
@@ -25,7 +38,7 @@ const MAX_RETRY_ATTEMPTS = 3; // Maximum number of retry attempts
 const RETRY_DELAY_MS = 500; // Delay between retry attempts in milliseconds
 
 // Function to perform a database query with retries
-function performDatabaseQueryWithRetry(
+async function performDatabaseQueryWithRetry(
   query,
   params,
   callback,
@@ -36,11 +49,11 @@ function performDatabaseQueryWithRetry(
     callback(new Error("Database query failed after max retry attempts."));
     return;
   }
-
   try {
-    const stmt = db.prepare(query);
-    const rows = stmt.all(params);
-    callback(null, rows);
+    const client = await pool.connect();
+    const result = await client.query(query, params);
+    client.release();
+    callback(null, result.rows);
   } catch (err) {
     if (retryCount == MAX_RETRY_ATTEMPTS) {
       console.error(`Error executing query: ${query}, Error: ${err.message}`);
@@ -66,10 +79,10 @@ app.get("/api/panelStatus", (req, res) => {
   let query = "";
   let params = [];
   if (panelNumber) {
-    query = "SELECT * FROM PanelStatus WHERE PanelNo = ?";
+    query = `SELECT * FROM "${schema}"."PanelStatus" WHERE "PanelNo" = $1`;
     params = [panelNumber];
   } else {
-    query = "SELECT * FROM PanelStatus";
+    query = `SELECT * FROM "${schema}"."PanelStatus" ORDER BY "PanelNo" ASC`;
   }
   performDatabaseQueryWithRetry(query, params, (err, rows) => {
     if (err) {
@@ -84,7 +97,7 @@ app.get("/api/panelStatus", (req, res) => {
 app.get("/api/latestScore", (req, res) => {
   const panelNumber = req.query.panelNumber;
   const query =
-    "SELECT * FROM DisplayScreen WHERE PanelNo = ? ORDER BY LastUpdatedTimestamp DESC LIMIT 1";
+  `SELECT * FROM "${schema}"."DisplayScreen" WHERE "PanelNo" = $1 ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST LIMIT 1`;
 
   performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
     if (err) {
@@ -99,7 +112,7 @@ app.get("/api/latestScore", (req, res) => {
 app.get("/api/latest", (req, res) => {
   const panelNumber = req.query.panelNumber;
   const query =
-    "SELECT * FROM DisplayScreen WHERE PanelNo = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY LastUpdatedTimestamp DESC LIMIT 1";
+  `SELECT * FROM "${schema}"."DisplayScreen" WHERE "PanelNo" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST LIMIT 1`;
 
   performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
     if (err) {
@@ -119,7 +132,7 @@ app.get("/api/latest", (req, res) => {
           categoryRoundExerciseRows = cachedData;
         } else {
           const query =
-            "SELECT * FROM CategoryRoundExercises where CategoryId = ?";
+          `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1`;
 
           performDatabaseQueryWithRetry(query, [categoryId], (err, rows2) => {
             if (err) {
@@ -223,7 +236,7 @@ function isValueNullOrEmpty(value) {
 app.get("/api/exerciseNumbers", (req, res) => {
   const categoryId = req.query.catId;
   const query =
-    "SELECT ExerciseNumber, RoundName FROM DisplayScreenRoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM(SELECT CompetitorId, Max(ExerciseNumber) Exercises FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY Exercises DESC LIMIT 1)) ORDER BY ExerciseNumber";
+  `SELECT "ExerciseNumber", "RoundName" FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM (SELECT "CompetitorId", Max("ExerciseNumber") "Exercises" FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1  GROUP BY "CompetitorId" ORDER BY "Exercises" DESC LIMIT 1)) ORDER BY "ExerciseNumber"`;
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -237,7 +250,7 @@ app.get("/api/exerciseNumbers", (req, res) => {
 
 app.get("/api/rounds", (req, res) => {
   const categoryId = req.query.catId;
-  const query = "SELECT * FROM Rounds WHERE CategoryId = ?  ORDER BY RoundOrder";
+  const query = `SELECT * FROM "${schema}"."Rounds" WHERE "CategoryId" = $1  ORDER BY "RoundOrder"`;
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -254,10 +267,10 @@ app.get("/api/categories", (req, res) => {
   let query = "";
   let params = [];
   if (categoryId) {
-    query = "SELECT * FROM Categories WHERE CatId = ?";
+    query = `SELECT * FROM "${schema}"."Categories" WHERE "CatId" = $1`;
     params = [categoryId];
   } else {
-    query = "SELECT * FROM Categories";
+    query = `SELECT * FROM "${schema}"."Categories"`;
   }
   const cacheKey = `categories_${categoryId}`;
   const cachedData = cache.get(cacheKey);
@@ -284,10 +297,10 @@ app.get("/api/competitorRanks", (req, res) => {
   let query = "";
   if (compType == 0) {
     query =
-      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, Nation, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY ZeroRank LIMIT 8";
+    `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "ZeroRank" LIMIT 8`;
   } else {
     query =
-      "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, Nation, DisplayClub, ZeroRank, DisplayZeroRank, DisplayCumulativeRank FROM DisplayScreenRoundTotals WHERE CatId = ? ORDER BY CumulativeRank LIMIT 8";
+    `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "CumulativeRank" LIMIT 8`;
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -302,7 +315,7 @@ app.get("/api/competitorRanks", (req, res) => {
 app.get("/api/qualifyingStartList", (req, res) => {
   const categoryId = req.query.catId;
   const query =
-    "SELECT DISTINCT CompetitorId, FirstName1, FirstName2, Surname1, Surname2, Nation, DisplayClub FROM DisplayScreen WHERE CatId= ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY Q1Flight, Q1StartNo LIMIT 8";
+  `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "Q1Flight", "Q1StartNo" FROM (SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE) ORDER BY "Q1Flight", "Q1StartNo" LIMIT 8`;
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -318,7 +331,7 @@ app.get("/api/roundStartList", (req, res) => {
   const categoryId = req.query.catId;
   const roundName = req.query.roundName;
   const query =
-    "SELECT CompetitorId FROM RoundCompetitors rc INNER JOIN Rounds r on rc.RoundId = r.RoundId WHERE CategoryId = ? and RoundName = ? ORDER BY FlightId, StartNo";
+  `SELECT "CompetitorId" FROM "${schema}"."RoundCompetitors" rc INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" WHERE "CategoryId" = $1 and "RoundName" = $2 ORDER BY "FlightId", "StartNo"`;
 
   performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
@@ -334,7 +347,7 @@ app.get("/api/roundStartListCompetitors", (req, res) => {
   const categoryId = req.query.catId;
   const roundName = req.query.roundName;
   const query =
-    "SELECT c.FirstName1, c.FirstName2, c.Surname1, c.Surname2, c.DisplayClub FROM Competitors c INNER JOIN RoundCompetitors rc on c.CompetitorId = rc.CompetitorId INNER JOIN Rounds r on rc.RoundId = r.RoundId and r.CategoryId = ? and r.RoundName = ?  INNER JOIN Flights f on f.FlightId = rc.FlightId ORDER BY f.flightNumber, rc.StartNo";
+  `SELECT c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub" FROM "${schema}"."Competitors" c INNER JOIN "${schema}"."RoundCompetitors" rc on c."CompetitorId" = rc."CompetitorId" INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" and r."CategoryId" = $1 and r."RoundName" = $2 INNER JOIN "${schema}"."Flights" f on f."FlightId" = rc."FlightId" ORDER BY f."FlightNumber", rc."StartNo"`;
 
   performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
@@ -351,7 +364,7 @@ app.get("/api/competitorRoundTotal", (req, res) => {
     ? Number(req.query.competitorId)
     : "";
   const query =
-    "SELECT DISTINCT * FROM DisplayScreenRoundTotals WHERE CompetitorId = ? ORDER BY ExerciseNumber";
+  `SELECT DISTINCT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CompetitorId" = $1 ORDER BY "ExerciseNumber"`;
 
   performDatabaseQueryWithRetry(query, [competitorId], (err, rows) => {
     if (err) {
@@ -364,7 +377,7 @@ app.get("/api/competitorRoundTotal", (req, res) => {
 });
 
 app.get("/api/displayCategories", (req, res) => {
-  const query = "SELECT * FROM Categories WHERE Categories.Display=1";
+  const query = `SELECT * FROM "${schema}"."Categories" WHERE "Display" = 1`;
   performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
@@ -389,7 +402,7 @@ app.get("/api/categoryRoundExercises", (req, res) => {
   }
 
   const query =
-    "SELECT * FROM CategoryRoundExercises where CategoryId = ? and ExerciseNumber = ?";
+  `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1 and "ExerciseNumber" = $2`;
 
   performDatabaseQueryWithRetry(
     query,
@@ -413,10 +426,10 @@ app.get("/api/onlineResults", (req, res) => {
   let query = "";
   if (compType == 0) {
     query =
-      "SELECT * FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY (CASE WHEN ZeroRank IS NULL THEN 1 ELSE 0 END), ZeroRank, Q1Flight, Q1StartNo";
+    `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "ZeroRank" IS NULL THEN 1 ELSE 0 END), "ZeroRank", "Q1Flight", "Q1StartNo"`;
   } else {
     query =
-      "SELECT * FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1) ORDER BY (CASE WHEN CumulativeRank IS NULL THEN 1 ELSE 0 END), CumulativeRank, Q1Flight, Q1StartNo";
+    `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "CumulativeRank" IS NULL THEN 1 ELSE 0 END), "CumulativeRank", "Q1Flight", "Q1StartNo"`;
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, competitorRows) => {
     if (err) {
@@ -424,7 +437,7 @@ app.get("/api/onlineResults", (req, res) => {
       res.status(500).json({ error: "Internal Server Error" });
     } else {
       query =
-        "SELECT * FROM DisplayScreenExerciseTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+      `SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
       performDatabaseQueryWithRetry(
         query,
         [categoryId],
@@ -434,7 +447,7 @@ app.get("/api/onlineResults", (req, res) => {
             res.status(500).json({ error: "Internal Server Error" });
           } else {
             query =
-              "SELECT * FROM RoundTotals WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+            `SELECT * FROM "${schema}"."RoundTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
             performDatabaseQueryWithRetry(
               query,
               [categoryId],
@@ -444,7 +457,7 @@ app.get("/api/onlineResults", (req, res) => {
                   res.status(500).json({ error: "Internal Server Error" });
                 } else {
                   query =
-                    "SELECT * FROM ExerciseVideos WHERE CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1))";
+                  `SELECT * FROM "${schema}"."ExerciseVideos" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
                   performDatabaseQueryWithRetry(
                     query,
                     [categoryId],
@@ -456,7 +469,7 @@ app.get("/api/onlineResults", (req, res) => {
                           .json({ error: "Internal Server Error" });
                       } else {
                         query =
-                          "SELECT * FROM ExerciseMedians where CompetitorId IN (SELECT CompetitorId FROM DisplayScreen WHERE CatId = ? AND (Withdrawn IS NULL OR Withdrawn != 1));";
+                        `SELECT * FROM "${schema}"."ExerciseMedians" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
                         performDatabaseQueryWithRetry(
                           query,
                           [categoryId],
@@ -590,7 +603,7 @@ app.get("/api/onlineResults", (req, res) => {
 });
 
 app.get("/api/startListRounds", (req, res) => {
-  const query = "SELECT r.CategoryId, r.RoundName, c.Discipline, c.Category, r1.NumberOfRounds FROM Rounds r INNER JOIN Categories c on r.CategoryId = c.CatId INNER JOIN (SELECT DISTINCT CategoryId, Count(*) NumberOfRounds FROM Rounds GROUP BY CategoryId) r1 on r.CategoryId = r1.CategoryId WHERE r.roundOrder = 1 OR (r.roundOrder > 1 AND EXISTS (SELECT 1 FROM Rounds prev WHERE prev.CategoryId = r.CategoryId AND prev.roundOrder = r.roundOrder - 1 AND prev.SignedOff = 1)) order by r.CategoryId, r.roundOrder";
+  const query = `SELECT r."CategoryId", r."RoundName", c."Discipline", c."Category", r1."NumberOfRounds" FROM "${schema}"."Rounds" r INNER JOIN "${schema}"."Categories" c on r."CategoryId" = c."CatId" INNER JOIN (SELECT DISTINCT "CategoryId", Count(*) "NumberOfRounds" FROM "${schema}"."Rounds" GROUP BY "CategoryId") r1 on r."CategoryId" = r1."CategoryId" WHERE r."RoundOrder" = 1 OR (r."RoundOrder" > 1 AND EXISTS (SELECT 1 FROM "${schema}"."Rounds" prev WHERE prev."CategoryId" = r."CategoryId" AND prev."RoundOrder" = r."RoundOrder" - 1 AND prev."SignedOff" = TRUE)) order by r."CategoryId", r."RoundOrder"`;
   performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
@@ -602,7 +615,7 @@ app.get("/api/startListRounds", (req, res) => {
 });
 
 app.get("/api/eventInfo", (req, res) => {
-  const query = "SELECT * FROM Event";
+  const query = `SELECT * FROM "${schema}"."Event"`;
   performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
