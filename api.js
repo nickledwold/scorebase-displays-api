@@ -7,18 +7,18 @@ app.use(cors());
 
 const args = process.argv.slice(2); // Skip the first two arguments which are node and script file paths
 
-if (args.length < 6) {
-  console.error("Usage: node api.js <port> <dbport> <host> <user> <database> <pw> <schema>");
+if (args.length < 2) {
+  console.error("Usage: node api.js <host> <schema>");
   process.exit(1);
 }
 
-const port = parseInt(args[0]);
-const dbport = parseInt(args[1]);
-const host = args[2];
-const user = args[3];
-const database = args[4];
-const password = args[5];
-const schema = args[6];
+const port = 3000;
+const dbport = 5432;
+const host = args[0];
+const user = "postgres";
+const database = "scorebase";
+const password = "scorebase";
+const schema = args[1];
 
 /*const pool = new Pool({
   connectionString,
@@ -96,8 +96,7 @@ app.get("/api/panelStatus", (req, res) => {
 
 app.get("/api/latestScore", (req, res) => {
   const panelNumber = req.query.panelNumber;
-  const query =
-  `SELECT * FROM "${schema}"."DisplayScreen" WHERE "PanelNo" = $1 ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST LIMIT 1`;
+  const query = `SELECT * FROM "${schema}"."DisplayScreen" WHERE "PanelNo" = $1 ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST LIMIT 1`;
 
   performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
     if (err) {
@@ -111,8 +110,7 @@ app.get("/api/latestScore", (req, res) => {
 
 app.get("/api/latest", (req, res) => {
   const panelNumber = req.query.panelNumber;
-  const query =
-  `SELECT * FROM "${schema}"."DisplayScreen" WHERE "PanelNo" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST LIMIT 1`;
+  const query = `SELECT * FROM "${schema}"."DisplayScreen" WHERE "PanelNo" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST LIMIT 1`;
 
   performDatabaseQueryWithRetry(query, [panelNumber], (err, rows) => {
     if (err) {
@@ -131,8 +129,7 @@ app.get("/api/latest", (req, res) => {
         if (cachedData) {
           categoryRoundExerciseRows = cachedData;
         } else {
-          const query =
-          `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1`;
+          const query = `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1`;
 
           performDatabaseQueryWithRetry(query, [categoryId], (err, rows2) => {
             if (err) {
@@ -235,8 +232,7 @@ function isValueNullOrEmpty(value) {
 
 app.get("/api/exerciseNumbers", (req, res) => {
   const categoryId = req.query.catId;
-  const query =
-  `SELECT "ExerciseNumber", "RoundName" FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM (SELECT "CompetitorId", Max("ExerciseNumber") "Exercises" FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1  GROUP BY "CompetitorId" ORDER BY "Exercises" DESC LIMIT 1)) ORDER BY "ExerciseNumber"`;
+  const query = `SELECT "ExerciseNumber", "RoundName" FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM (SELECT "CompetitorId", Max("ExerciseNumber") "Exercises" FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1  GROUP BY "CompetitorId" ORDER BY "Exercises" DESC LIMIT 1)) ORDER BY "ExerciseNumber"`;
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -270,7 +266,7 @@ app.get("/api/categories", (req, res) => {
     query = `SELECT * FROM "${schema}"."Categories" WHERE "CatId" = $1`;
     params = [categoryId];
   } else {
-    query = `SELECT * FROM "${schema}"."Categories"`;
+    query = `SELECT * FROM "${schema}"."Categories" ORDER BY "No" ASC`;
   }
   const cacheKey = `categories_${categoryId}`;
   const cachedData = cache.get(cacheKey);
@@ -296,11 +292,9 @@ app.get("/api/competitorRanks", (req, res) => {
 
   let query = "";
   if (compType == 0) {
-    query =
-    `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "ZeroRank" LIMIT 8`;
+    query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "ZeroRank" LIMIT 8`;
   } else {
-    query =
-    `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "CumulativeRank" LIMIT 8`;
+    query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "CumulativeRank" LIMIT 8`;
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -314,8 +308,7 @@ app.get("/api/competitorRanks", (req, res) => {
 
 app.get("/api/qualifyingStartList", (req, res) => {
   const categoryId = req.query.catId;
-  const query =
-  `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "Q1Flight", "Q1StartNo" FROM (SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE) ORDER BY "Q1Flight", "Q1StartNo" LIMIT 8`;
+  const query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "Q1Flight", "Q1StartNo" FROM (SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE) ORDER BY "Q1Flight", "Q1StartNo" LIMIT 8`;
 
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -330,8 +323,7 @@ app.get("/api/qualifyingStartList", (req, res) => {
 app.get("/api/roundStartList", (req, res) => {
   const categoryId = req.query.catId;
   const roundName = req.query.roundName;
-  const query =
-  `SELECT "CompetitorId" FROM "${schema}"."RoundCompetitors" rc INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" WHERE "CategoryId" = $1 and "RoundName" = $2 ORDER BY "FlightId", "StartNo"`;
+  const query = `SELECT "CompetitorId" FROM "${schema}"."RoundCompetitors" rc INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" WHERE "CategoryId" = $1 and "RoundName" = $2 ORDER BY "FlightId", "StartNo"`;
 
   performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
@@ -346,8 +338,7 @@ app.get("/api/roundStartList", (req, res) => {
 app.get("/api/roundStartListCompetitors", (req, res) => {
   const categoryId = req.query.catId;
   const roundName = req.query.roundName;
-  const query =
-  `SELECT c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub" FROM "${schema}"."Competitors" c INNER JOIN "${schema}"."RoundCompetitors" rc on c."CompetitorId" = rc."CompetitorId" INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" and r."CategoryId" = $1 and r."RoundName" = $2 INNER JOIN "${schema}"."Flights" f on f."FlightId" = rc."FlightId" ORDER BY f."FlightNumber", rc."StartNo"`;
+  const query = `SELECT c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub" FROM "${schema}"."Competitors" c INNER JOIN "${schema}"."RoundCompetitors" rc on c."CompetitorId" = rc."CompetitorId" INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" and r."CategoryId" = $1 and r."RoundName" = $2 INNER JOIN "${schema}"."Flights" f on f."FlightId" = rc."FlightId" ORDER BY f."FlightNumber", rc."StartNo"`;
 
   performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
@@ -363,8 +354,7 @@ app.get("/api/competitorRoundTotal", (req, res) => {
   const competitorId = !isNaN(req.query.competitorId)
     ? Number(req.query.competitorId)
     : "";
-  const query =
-  `SELECT DISTINCT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CompetitorId" = $1 ORDER BY "ExerciseNumber"`;
+  const query = `SELECT DISTINCT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CompetitorId" = $1 ORDER BY "ExerciseNumber"`;
 
   performDatabaseQueryWithRetry(query, [competitorId], (err, rows) => {
     if (err) {
@@ -401,8 +391,7 @@ app.get("/api/categoryRoundExercises", (req, res) => {
     return;
   }
 
-  const query =
-  `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1 and "ExerciseNumber" = $2`;
+  const query = `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1 and "ExerciseNumber" = $2`;
 
   performDatabaseQueryWithRetry(
     query,
@@ -425,19 +414,16 @@ app.get("/api/onlineResults", (req, res) => {
 
   let query = "";
   if (compType == 0) {
-    query =
-    `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "ZeroRank" IS NULL THEN 1 ELSE 0 END), "ZeroRank", "Q1Flight", "Q1StartNo"`;
+    query = `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "ZeroRank" IS NULL THEN 1 ELSE 0 END), "ZeroRank", "Q1Flight", "Q1StartNo"`;
   } else {
-    query =
-    `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "CumulativeRank" IS NULL THEN 1 ELSE 0 END), "CumulativeRank", "Q1Flight", "Q1StartNo"`;
+    query = `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "CumulativeRank" IS NULL THEN 1 ELSE 0 END), "CumulativeRank", "Q1Flight", "Q1StartNo"`;
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, competitorRows) => {
     if (err) {
       console.error("Error executing query:", err.message);
       res.status(500).json({ error: "Internal Server Error" });
     } else {
-      query =
-      `SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
+      query = `SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE) ORDER BY "ExerciseNumber" ASC`;
       performDatabaseQueryWithRetry(
         query,
         [categoryId],
@@ -446,8 +432,7 @@ app.get("/api/onlineResults", (req, res) => {
             console.error("Error executing query:", err.message);
             res.status(500).json({ error: "Internal Server Error" });
           } else {
-            query =
-            `SELECT * FROM "${schema}"."RoundTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
+            query = `SELECT * FROM "${schema}"."RoundTotals" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
             performDatabaseQueryWithRetry(
               query,
               [categoryId],
@@ -456,8 +441,7 @@ app.get("/api/onlineResults", (req, res) => {
                   console.error("Error executing query:", err.message);
                   res.status(500).json({ error: "Internal Server Error" });
                 } else {
-                  query =
-                  `SELECT * FROM "${schema}"."ExerciseVideos" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE)`;
+                  query = `SELECT * FROM "${schema}"."ExerciseVideos" WHERE "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE) ORDER BY "Angle" ASC`;
                   performDatabaseQueryWithRetry(
                     query,
                     [categoryId],
@@ -468,8 +452,7 @@ app.get("/api/onlineResults", (req, res) => {
                           .status(500)
                           .json({ error: "Internal Server Error" });
                       } else {
-                        query =
-                        `SELECT * FROM "${schema}"."ExerciseMedians" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
+                        query = `SELECT * FROM "${schema}"."ExerciseMedians" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
                         performDatabaseQueryWithRetry(
                           query,
                           [categoryId],
@@ -483,109 +466,176 @@ app.get("/api/onlineResults", (req, res) => {
                                 .status(500)
                                 .json({ error: "Internal Server Error" });
                             } else {
-                              result = {};
-                              i = 0;
-                              for (
-                                let dataIndex = 0;
-                                dataIndex < competitorRows.length;
-                                dataIndex++
-                              ) {
-                                const competitorData =
-                                  competitorRows[dataIndex];
-                                const competitorExercises = exerciseRows.filter(
-                                  (exercise) =>
-                                    exercise.CompetitorId ===
-                                    competitorData.CompetitorId
-                                );
-                                competitorData.Exercises = competitorExercises;
-                                const competitorRoundTotals =
-                                  roundTotalRows.filter(
-                                    (roundTotal) =>
-                                      roundTotal.CompetitorId ===
-                                      competitorData.CompetitorId
-                                  );
-                                if (competitorRoundTotals.length > 0) {
-                                  competitorData.RoundTotals =
-                                    competitorRoundTotals;
-                                }
-                                const competitorVideos = videoRows.filter(
-                                  (video) =>
-                                    video.CompetitorId ===
-                                    competitorData.CompetitorId
-                                );
-                                const competitorMedians = medianRows.filter(
-                                  (median) =>
-                                    median.CompetitorId ===
-                                    competitorData.CompetitorId
-                                );
-                                if (competitorExercises.length > 0) {
-                                  for (
-                                    let dataIndex = 0;
-                                    dataIndex < competitorData.Exercises.length;
-                                    dataIndex++
-                                  ) {
-                                    const exerciseData =
-                                      competitorData.Exercises[dataIndex];
-
-                                    let exerciseMedians =
-                                      competitorMedians.filter(
-                                        (median) =>
-                                          median.ExerciseNumber ===
-                                          exerciseData.ExerciseNumber
-                                      );
-                                    if (exerciseMedians.length > 0) {
-                                      exerciseMedians = exerciseMedians.map(
-                                        (median) => {
-                                          return {
-                                            ...median,
-                                            DeductionNumber:
-                                              (categoryId[0] == "I" ||
-                                                categoryId[0] == "S") &&
-                                              median.DeductionNumber == 11
-                                                ? "L"
-                                                : categoryId[0] == "U" &&
-                                                  median.DeductionNumber == 9
-                                                ? "L"
-                                                : categoryId[0] == "D" &&
-                                                  median.DeductionNumber == 3
-                                                ? "L"
-                                                : median.DeductionNumber,
-                                          };
-                                        }
-                                      );
-                                      exerciseData.Medians = exerciseMedians;
-                                    }
-                                    const exerciseVideos =
-                                      competitorVideos.filter(
+                              query = `SELECT * FROM "${schema}"."ExerciseDeductions" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
+                              performDatabaseQueryWithRetry(
+                                query,
+                                [categoryId],
+                                (err, deductionRows) => {
+                                  if (err) {
+                                    console.error(
+                                      "Error executing query:",
+                                      err.message
+                                    );
+                                    res
+                                      .status(500)
+                                      .json({ error: "Internal Server Error" });
+                                  } else {
+                                    result = {};
+                                    i = 0;
+                                    for (
+                                      let dataIndex = 0;
+                                      dataIndex < competitorRows.length;
+                                      dataIndex++
+                                    ) {
+                                      const competitorData =
+                                        competitorRows[dataIndex];
+                                      const competitorExercises =
+                                        exerciseRows.filter(
+                                          (exercise) =>
+                                            exercise.CompetitorId ===
+                                            competitorData.CompetitorId
+                                        );
+                                      competitorData.Exercises =
+                                        competitorExercises;
+                                      const competitorRoundTotals =
+                                        roundTotalRows.filter(
+                                          (roundTotal) =>
+                                            roundTotal.CompetitorId ===
+                                            competitorData.CompetitorId
+                                        );
+                                      if (competitorRoundTotals.length > 0) {
+                                        competitorData.RoundTotals =
+                                          competitorRoundTotals;
+                                      }
+                                      const competitorVideos = videoRows.filter(
                                         (video) =>
-                                          video.ExerciseNumber ===
-                                          exerciseData.ExerciseNumber
+                                          video.CompetitorId ===
+                                          competitorData.CompetitorId
                                       );
-                                    if (exerciseVideos.length > 0) {
-                                      exerciseData.Videos = exerciseVideos;
+                                      const competitorMedians =
+                                        medianRows.filter(
+                                          (median) =>
+                                            median.CompetitorId ===
+                                            competitorData.CompetitorId
+                                        );
+                                      const competitorDeductions =
+                                        deductionRows.filter(
+                                          (deduction) =>
+                                            deduction.CompetitorId ===
+                                            competitorData.CompetitorId
+                                        );
+                                      if (competitorExercises.length > 0) {
+                                        for (
+                                          let dataIndex = 0;
+                                          dataIndex <
+                                          competitorData.Exercises.length;
+                                          dataIndex++
+                                        ) {
+                                          const exerciseData =
+                                            competitorData.Exercises[dataIndex];
+
+                                          let exerciseMedians =
+                                            competitorMedians.filter(
+                                              (median) =>
+                                                median.ExerciseNumber ===
+                                                exerciseData.ExerciseNumber
+                                            );
+                                          let exerciseDeductions =
+                                            competitorDeductions.filter(
+                                              (deduction) =>
+                                                deduction.ExerciseNumber ===
+                                                exerciseData.ExerciseNumber
+                                            );
+                                          if (exerciseMedians.length > 0) {
+                                            exerciseMedians =
+                                              exerciseMedians.map((median) => {
+                                                return {
+                                                  ...median,
+                                                  DeductionNumber:
+                                                    (categoryId[0] == "I" ||
+                                                      categoryId[0] == "S") &&
+                                                    median.DeductionNumber == 11
+                                                      ? "L"
+                                                      : categoryId[0] == "U" &&
+                                                        median.DeductionNumber ==
+                                                          9
+                                                      ? "L"
+                                                      : categoryId[0] == "D" &&
+                                                        median.DeductionNumber ==
+                                                          3
+                                                      ? "L"
+                                                      : median.DeductionNumber,
+                                                };
+                                              });
+                                            exerciseData.Medians =
+                                              exerciseMedians;
+                                          }
+                                          if (exerciseDeductions.length > 0) {
+                                            exerciseDeductions =
+                                              exerciseDeductions.map(
+                                                (deduction) => {
+                                                  return {
+                                                    ...deduction,
+                                                    DeductionNumber:
+                                                      (categoryId[0] == "I" ||
+                                                        categoryId[0] == "S") &&
+                                                      deduction.DeductionNumber ==
+                                                        11
+                                                        ? "L"
+                                                        : categoryId[0] ==
+                                                            "U" &&
+                                                          deduction.DeductionNumber ==
+                                                            9
+                                                        ? "L"
+                                                        : categoryId[0] ==
+                                                            "D" &&
+                                                          deduction.DeductionNumber ==
+                                                            3
+                                                        ? "L"
+                                                        : deduction.DeductionNumber,
+                                                  };
+                                                }
+                                              );
+                                            exerciseData.Deductions =
+                                              exerciseDeductions;
+                                          }
+                                          const exerciseVideos =
+                                            competitorVideos.filter(
+                                              (video) =>
+                                                video.ExerciseNumber ===
+                                                exerciseData.ExerciseNumber
+                                            );
+                                          if (exerciseVideos.length > 0) {
+                                            exerciseData.Videos =
+                                              exerciseVideos;
+                                          }
+                                        }
+                                      }
+                                      for (let i = 1; i <= 5; i++) {
+                                        const keysToRemove = [
+                                          `Ex${i}E`,
+                                          `Ex${i}D`,
+                                          `Ex${i}B`,
+                                          `Ex${i}HD`,
+                                          `Ex${i}ToF`,
+                                          `Ex${i}S`,
+                                          `Ex${i}Pen`,
+                                          `Ex${i}Total`,
+                                          `Ex${i}Rank`,
+                                        ];
+                                        for (const key of keysToRemove) {
+                                          if (
+                                            competitorData.hasOwnProperty(key)
+                                          ) {
+                                            delete competitorData[key];
+                                          }
+                                        }
+                                      }
                                     }
+                                    res.json(competitorRows);
                                   }
                                 }
-                                for (let i = 1; i <= 5; i++) {
-                                  const keysToRemove = [
-                                    `Ex${i}E`,
-                                    `Ex${i}D`,
-                                    `Ex${i}B`,
-                                    `Ex${i}HD`,
-                                    `Ex${i}ToF`,
-                                    `Ex${i}S`,
-                                    `Ex${i}Pen`,
-                                    `Ex${i}Total`,
-                                    `Ex${i}Rank`,
-                                  ];
-                                  for (const key of keysToRemove) {
-                                    if (competitorData.hasOwnProperty(key)) {
-                                      delete competitorData[key];
-                                    }
-                                  }
-                                }
-                              }
-                              res.json(competitorRows);
+                              );
                             }
                           }
                         );
