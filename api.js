@@ -4,6 +4,8 @@ const cors = require("cors");
 const NodeCache = require("node-cache");
 const app = express();
 app.use(cors());
+const fs = require('fs');
+const path = require('path');
 
 const args = process.argv.slice(2); // Skip the first two arguments which are node and script file paths
 
@@ -673,6 +675,20 @@ app.get("/api/eventInfo", (req, res) => {
     } else {
       res.json(rows);
     }
+  });
+});
+
+app.get('/api/videoFile', (req, res) => {
+  const event = req.query.event;
+  const fileName = req.query.fileName;
+  const variant = req.query.variant;
+  const directory = "\\\\10.0.0.4\\Video-Drive"
+  const filePath = path.join(directory, event, variant, fileName);
+  res.sendFile(filePath, err => {
+      if (err) {
+          console.error('File failed to send:', err);
+          res.status(500).send('Error sending file');
+      }
   });
 });
 
