@@ -655,7 +655,7 @@ app.get("/api/onlineResults", (req, res) => {
 });
 
 app.get("/api/startListRounds", (req, res) => {
-  const query = `SELECT r."CategoryId", r."RoundName", c."Discipline", c."Category", r1."NumberOfRounds" FROM "${schema}"."Rounds" r INNER JOIN "${schema}"."Categories" c on r."CategoryId" = c."CatId" INNER JOIN (SELECT DISTINCT "CategoryId", Count(*) "NumberOfRounds" FROM "${schema}"."Rounds" GROUP BY "CategoryId") r1 on r."CategoryId" = r1."CategoryId" WHERE r."RoundOrder" = 1 OR (r."RoundOrder" > 1 AND EXISTS (SELECT 1 FROM "${schema}"."Rounds" prev WHERE prev."CategoryId" = r."CategoryId" AND prev."RoundOrder" = r."RoundOrder" - 1 AND prev."SignedOff" = TRUE)) order by r."CategoryId", r."RoundOrder"`;
+  const query = `SELECT r."CategoryId", r."RoundName", c."Discipline", c."Category", r1."NumberOfRounds" FROM "${schema}"."Rounds" r INNER JOIN "${schema}"."Categories" c on r."CategoryId" = c."CatId" INNER JOIN (SELECT DISTINCT "CategoryId", Count(*) "NumberOfRounds" FROM "${schema}"."Rounds" GROUP BY "CategoryId") r1 on r."CategoryId" = r1."CategoryId" WHERE r."RoundOrder" = 1 OR (r."RoundOrder" > 1 AND EXISTS (SELECT 1 FROM "${schema}"."Rounds" prev WHERE prev."CategoryId" = r."CategoryId" AND prev."RoundOrder" = r."RoundOrder" - 1 AND prev."SignedOff" = TRUE)) order by c."No", r."RoundOrder"`;
   performDatabaseQueryWithRetry(query, [], (err, rows) => {
     if (err) {
       console.error("Error executing query:", err.message);
