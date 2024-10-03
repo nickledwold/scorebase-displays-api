@@ -294,9 +294,9 @@ app.get("/api/competitorRanks", (req, res) => {
 
   let query = "";
   if (compType == 0) {
-    query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "ZeroRank" LIMIT 8`;
+    query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "CumulativeRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "ZeroRank" LIMIT 8`;
   } else {
-    query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "CumulativeRank" LIMIT 8`;
+    query = `SELECT DISTINCT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "ZeroRank", "CumulativeRank", "DisplayZeroRank", "DisplayCumulativeRank" FROM (SELECT * FROM "${schema}"."DisplayScreenRoundTotals" WHERE "CatId" = $1) ORDER BY "CumulativeRank" LIMIT 8`;
   }
   performDatabaseQueryWithRetry(query, [categoryId], (err, rows) => {
     if (err) {
@@ -340,7 +340,7 @@ app.get("/api/roundStartList", (req, res) => {
 app.get("/api/roundStartListCompetitors", (req, res) => {
   const categoryId = req.query.catId;
   const roundName = req.query.roundName;
-  const query = `SELECT c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub" FROM "${schema}"."Competitors" c INNER JOIN "${schema}"."RoundCompetitors" rc on c."CompetitorId" = rc."CompetitorId" INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" and r."CategoryId" = $1 and r."RoundName" = $2 INNER JOIN "${schema}"."Flights" f on f."FlightId" = rc."FlightId" ORDER BY f."FlightNumber", rc."StartNo"`;
+  const query = `SELECT c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub", f."FlightNumber" FROM "${schema}"."Competitors" c INNER JOIN "${schema}"."RoundCompetitors" rc on c."CompetitorId" = rc."CompetitorId" INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" and r."CategoryId" = $1 and r."RoundName" = $2 INNER JOIN "${schema}"."Flights" f on f."FlightId" = rc."FlightId" ORDER BY f."FlightNumber", rc."StartNo"`;
 
   performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
