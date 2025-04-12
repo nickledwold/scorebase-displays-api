@@ -4,8 +4,8 @@ const cors = require("cors");
 const NodeCache = require("node-cache");
 const app = express();
 app.use(cors());
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 const args = process.argv.slice(2); // Skip the first two arguments which are node and script file paths
 
@@ -340,7 +340,18 @@ app.get("/api/roundStartList", (req, res) => {
 app.get("/api/roundStartListCompetitors", (req, res) => {
   const categoryId = req.query.catId;
   const roundName = req.query.roundName;
-  const query = `SELECT c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub", f."FlightNumber" FROM "${schema}"."Competitors" c INNER JOIN "${schema}"."RoundCompetitors" rc on c."CompetitorId" = rc."CompetitorId" INNER JOIN "${schema}"."Rounds" r on rc."RoundId" = r."RoundId" and r."CategoryId" = $1 and r."RoundName" = $2 INNER JOIN "${schema}"."Flights" f on f."FlightId" = rc."FlightId" ORDER BY f."FlightNumber", rc."StartNo"`;
+  const query = `SELECT 
+        c."FirstName1", c."FirstName2", c."Surname1", c."Surname2", c."DisplayClub", f."FlightNumber", rc."StartNo"
+      FROM 
+        "${schema}"."Competitors" c
+      INNER JOIN 
+        "${schema}"."RoundCompetitors" rc ON c."CompetitorId" = rc."CompetitorId"
+      INNER JOIN 
+        "${schema}"."Rounds" r ON rc."RoundId" = r."RoundId" AND r."CategoryId" = $1 AND r."RoundName" = $2
+      INNER JOIN 
+        "${schema}"."Flights" f ON f."FlightId" = rc."FlightId"
+      ORDER BY 
+        f."FlightNumber", rc."StartNo"`;
 
   performDatabaseQueryWithRetry(query, [categoryId, roundName], (err, rows) => {
     if (err) {
@@ -377,6 +388,529 @@ app.get("/api/displayCategories", (req, res) => {
     } else {
       res.json(rows);
     }
+  });
+});
+
+function performDatabaseQueryWithRetryAsync(query, params) {
+  return new Promise((resolve, reject) => {
+    performDatabaseQueryWithRetry(query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+}
+
+app.get("/api/bg/latest", async (req, res) => {
+  const query = `SELECT * FROM (SELECT *
+FROM (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY "PanelNo" ORDER BY "LastUpdatedTimestamp" DESC NULLS LAST) AS rn
+    FROM "${schema}"."DisplayScreen" WHERE "LastUpdatedTimestamp" IS NOT NULL
+) AS ranked
+WHERE rn <= 1) latest
+         INNER JOIN "${schema}"."PanelStatus" p on p."PanelNo"::int = latest."PanelNo"
+ORDER BY p."PanelNo" ASC`;
+
+  const rows = await performDatabaseQueryWithRetryAsync(query, []);
+
+  if (rows.length > 0) {
+    await Promise.all(
+      rows.map(async (competitor) => {
+        const categoryId = competitor.CatId;
+        const cacheKey = `categoryRoundExercises_${categoryId}`;
+
+        let categoryRoundExerciseRows = [];
+
+        const cachedData = cache.get(cacheKey);
+        if (cachedData) {
+          categoryRoundExerciseRows = cachedData;
+          updateCompetitor(competitor, categoryRoundExerciseRows);
+        } else {
+          const query = `SELECT * FROM "${schema}"."CategoryRoundExercises" where "CategoryId" = $1`;
+          categoryRoundExerciseRows = await performDatabaseQueryWithRetryAsync(
+            query,
+            [categoryId]
+          );
+          cache.set(cacheKey, categoryRoundExerciseRows);
+          updateCompetitor(competitor, categoryRoundExerciseRows);
+        }
+      })
+    );
+    // Sample usage with your rows
+    const transformedData = transformData(rows); // rows is your original query result
+    res.json(transformedData);
+  } else {
+    res.json({});
+  }
+});
+
+function updateCompetitor(competitor, categoryRoundExerciseRows) {
+  const exercises = [
+    { exerciseNumber: 5, propertyPrefix: "Ex5" },
+    { exerciseNumber: 4, propertyPrefix: "Ex4" },
+    { exerciseNumber: 3, propertyPrefix: "Ex3" },
+    { exerciseNumber: 2, propertyPrefix: "Ex2" },
+    { exerciseNumber: 1, propertyPrefix: "Ex1" },
+  ];
+
+  let tempLatestExercise = {};
+
+  for (const exercise of exercises) {
+    if (!exercise) continue;
+    const totalProperty = `${exercise.propertyPrefix}Total`;
+    if (!isValueNullOrEmpty(competitor[totalProperty])) {
+      let categoryRoundExercise = categoryRoundExerciseRows.find(
+        (categoryRoundExercise) =>
+          categoryRoundExercise.ExerciseNumber == exercise.exerciseNumber
+      );
+      if (!categoryRoundExercise.RoundName) {
+        console.log(competitor.CompetitorId);
+        console.log(competitor.CatId);
+        console.log(categoryRoundExerciseRows);
+      }
+      tempLatestExercise = {
+        Exercise: exercise.exerciseNumber,
+        RoundName: categoryRoundExercise.RoundName,
+        Execution: competitor[`${exercise.propertyPrefix}E`],
+        Difficulty: competitor[`${exercise.propertyPrefix}D`],
+        Bonus: competitor[`${exercise.propertyPrefix}B`],
+        HorizontalDisplacement: competitor[`${exercise.propertyPrefix}HD`],
+        TimeOfFlight: competitor[`${exercise.propertyPrefix}ToF`],
+        Synchronisation: competitor[`${exercise.propertyPrefix}S`],
+        Penalty: competitor[`${exercise.propertyPrefix}Pen`],
+        Total: competitor[totalProperty],
+      };
+      break;
+    }
+  }
+  competitor.Exercise = tempLatestExercise;
+  for (let i = 1; i <= 5; i++) {
+    const keysToRemove = [
+      `Ex${i}E`,
+      `Ex${i}D`,
+      `Ex${i}B`,
+      `Ex${i}HD`,
+      `Ex${i}ToF`,
+      `Ex${i}S`,
+      `Ex${i}Pen`,
+      `Ex${i}Total`,
+      `Ex${i}Rank`,
+    ];
+    for (const key of keysToRemove) {
+      if (competitor.hasOwnProperty(key)) {
+        delete competitor[key];
+      }
+    }
+  }
+  if (!competitor.ZeroRank) {
+    competitor.Rank = "-";
+  } else {
+    if (competitor.CompType === 0 && competitor.F1Total > 0) {
+      competitor.Rank = competitor.DisplayZeroRank;
+    } else {
+      competitor.Rank = competitor.DisplayCumulativeRank;
+    }
+  }
+  const keysToRemove = [
+    `ZeroRank`,
+    `CumulativeRank`,
+    `DisplayZeroRank`,
+    `DisplayCumulativeRank`,
+    `Club`,
+    `Q1StartNo`,
+    `Q1Flight`,
+    `Q1Scoring`,
+  ];
+  for (const key of keysToRemove) {
+    if (competitor.hasOwnProperty(key)) {
+      delete competitor[key];
+    }
+  }
+}
+
+// Function to transform the data
+function transformData(rows) {
+  // Group rows by panel number
+  const groupedPanels = rows.reduce((acc, row) => {
+    const panelNo = row.PanelNo;
+    if (!acc[panelNo]) {
+      acc[panelNo] = [];
+    }
+    acc[panelNo].push(row);
+    return acc;
+  }, {});
+  // Transform the grouped panels into the desired format
+  const scores = Object.keys(groupedPanels).map((panelNo) => {
+    const panelRows = groupedPanels[panelNo];
+
+    // Find currentScore (rn = 1) and previousScore (rn = 2)
+    //const previousScoreRow = panelRows.find(row => row.rn == 2);
+    const currentScoreRow = panelRows.find((row) => row.rn == 1);
+
+    /*console.log(previousScoreRow);
+    console.log(currentScoreRow);*/
+    return {
+      panel: parseInt(panelNo),
+      //previousScore: previousScoreRow ? formatScore(previousScoreRow) : null,
+      currentGymnast: {
+        name:
+          currentScoreRow.Status == 1
+            ? currentScoreRow.Discipline == "TRS"
+              ? (currentScoreRow.NextToCompeteSurname1?.toUpperCase() || "") +
+                (currentScoreRow.NextToCompeteSurname2
+                  ? ", " + currentScoreRow.NextToCompeteSurname2.toUpperCase()
+                  : "")
+              : (currentScoreRow.NextToCompeteSurname1?.toUpperCase() || "") +
+                (currentScoreRow.NextToCompeteFirstName1
+                  ? " " + currentScoreRow.NextToCompeteFirstName1
+                  : "")
+            : currentScoreRow.Status == 0
+            ? currentScoreRow.Discipline == "TRS"
+              ? (currentScoreRow.LastToCompeteSurname1?.toUpperCase() || "") +
+                (currentScoreRow.LastToCompeteSurname2
+                  ? ", " + currentScoreRow.LastToCompeteSurname2.toUpperCase()
+                  : "")
+              : (currentScoreRow.LastToCompeteSurname1?.toUpperCase() || "") +
+                (currentScoreRow.LastToCompeteFirstName1
+                  ? " " + currentScoreRow.LastToCompeteFirstName1
+                  : "")
+            : null,
+
+        club:
+          currentScoreRow.Status == 1
+            ? currentScoreRow.NextToCompeteClub || ""
+            : currentScoreRow.Status == 0
+            ? currentScoreRow.LastToCompeteClub || ""
+            : null,
+
+        category:
+          currentScoreRow.Status == 1
+            ? (currentScoreRow.NextToCompeteDiscipline || "") +
+              " " +
+              (currentScoreRow.NextToCompeteCategory || "")
+            : currentScoreRow.Status == 0
+            ? (currentScoreRow.LastToCompeteDiscipline || "") +
+              " " +
+              (currentScoreRow.LastToCompeteCategory || "")
+            : null,
+      },
+      currentScore: currentScoreRow ? formatScore(currentScoreRow) : null,
+    };
+  });
+
+  return { scores };
+}
+
+// Helper function to format each score object
+function formatScore(row) {
+  return {
+    name:
+      row.Discipline == "TRS"
+        ? row.Surname1.toUpperCase() + ", " + row.Surname2.toUpperCase()
+        : row.Surname1.toUpperCase() + " " + row.FirstName1, // Assuming `Name` is the field for the competitor's name
+    club: row.DisplayClub,
+    category: row.Discipline + " " + row.Category,
+    round: row.Exercise.RoundName,
+    exercise: {
+      execution: row.Exercise.Execution,
+      difficulty: row.Exercise.Difficulty,
+      timeOfFlight: row.Exercise.TimeOfFlight,
+      synchronisation: row.Exercise.Synchronisation,
+      horizontalDisplacement: row.Exercise.HorizontalDisplacement,
+      bonus: row.Exercise.Bonus,
+      penalty: row.Exercise.Penalty,
+      total: row.Exercise.Total,
+    },
+    rank: row.Rank,
+  };
+}
+
+app.get("/api/bg/test/latest", (req, res) => {
+  res.json({
+    scores: [
+      {
+        panel: 1,
+        previousScore: {
+          name: "DOE John",
+          club: "Example Club",
+          category: "TRA Youth Men",
+          round: "Q2",
+          exercise: {
+            execution: "16.4",
+            difficulty: "0.4",
+            timeOfFlight: "6.45",
+            synchronisation: null,
+            horizontalDisplacement: "7.6",
+            bonus: null,
+            penalty: "0.0",
+            total: "30.85",
+          },
+          rank: "2",
+        },
+        currentScore: {
+          name: "SMITH Michael",
+          club: "Example Club",
+          category: "TRA Youth Men",
+          round: "Q2",
+          exercise: {
+            execution: "17.4",
+            difficulty: "0.4",
+            timeOfFlight: "5.35",
+            synchronisation: null,
+            horizontalDisplacement: "7.9",
+            bonus: null,
+            penalty: "0.0",
+            total: "31.05",
+          },
+          rank: "1",
+        },
+      },
+      {
+        panel: 2,
+        previousScore: {
+          name: "DOE Jane",
+          club: "Example Club",
+          category: "TRA Youth Women",
+          round: "Q2",
+          exercise: {
+            execution: "17.4",
+            difficulty: "0.4",
+            timeOfFlight: "6.45",
+            synchronisation: null,
+            horizontalDisplacement: "7.6",
+            bonus: null,
+            penalty: "0.0",
+            total: "31.85",
+          },
+          rank: "2",
+        },
+        currentScore: {
+          name: "ROGERS Mary",
+          club: "Example Club",
+          category: "TRA Youth Women",
+          round: "Q2",
+          exercise: {
+            execution: "19.4",
+            difficulty: "0.4",
+            timeOfFlight: "5.35",
+            synchronisation: null,
+            horizontalDisplacement: "7.9",
+            bonus: null,
+            penalty: "0.0",
+            total: "33.05",
+          },
+          rank: "1",
+        },
+      },
+    ],
+  });
+});
+
+app.get("/api/bg/rankings", (req, res) => {
+
+  let query = `SELECT DISTINCT "FirstName1", "FirstName2", "Surname1", "Surname2", "DisplayClub", "Discipline", "Category", "RoundName", "RoundTotal",
+              CASE WHEN "CompType" = 0 THEN "DisplayZeroRank"
+            WHEN "CompType" = 1 THEN "DisplayCumulativeRank"
+END AS "DisplayRank",
+CASE WHEN "CompType" = 0 THEN "ZeroRank"
+            WHEN "CompType" = 1 THEN "CumulativeRank"
+END AS "Rank"
+FROM "${schema}"."DisplayScreenRoundTotals" dsrt
+INNER JOIN (
+    SELECT "CatId", MAX("RoundOrder") AS LatestRoundOrder
+    FROM "${schema}"."DisplayScreenRoundTotals"
+    GROUP BY "CatId"
+) latestRounds
+ON dsrt."CatId" = latestRounds."CatId"
+AND dsrt."RoundOrder" = latestRounds.LatestRoundOrder
+INNER JOIN "${schema}"."Categories" c on dsrt."CatId" = c."CatId"
+ORDER BY "Discipline","Category","Rank"`;
+  
+  performDatabaseQueryWithRetry(query, [], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(transformToRankings(rows));
+    }
+  });
+});
+
+function transformToRankings(data) {
+  const rankings = [];
+
+  // Group data by Category and RoundName
+  const groupedData = data.reduce((acc, row) => {
+    const key = `${row.Discipline}-${row.Category}-${row.RoundName}`;
+    
+    if (!acc[key]) {
+      acc[key] = {
+        category: `${row.Discipline} ${row.Category}`,
+        round: row.RoundName,
+        competitors: [],
+      };
+    }
+
+    // Build competitor's full name
+    const name = row.Discipline == "TRS" ? `${row.Surname1.toUpperCase()}, ${row.Surname1.toUpperCase()}` : `${row.Surname1.toUpperCase()} ${row.FirstName1}`;
+
+    // Add competitor info
+    acc[key].competitors.push({
+      name: name.trim(),
+      club: row.DisplayClub,
+      total: row.RoundTotal,
+      rank: row.DisplayRank,
+    });
+
+    return acc;
+  }, {});
+
+  // Convert grouped data into rankings array
+  for (let key in groupedData) {
+    rankings.push(groupedData[key]);
+  }
+
+  return { rankings };
+}
+
+app.get("/api/bg/test/rankings", (req, res) => {
+  res.json({
+    rankings: [
+      {
+        category: "TRA Youth Women",
+        round: "Q2",
+        competitors: [
+          {
+            name: "ROGERS Mary",
+            club: "Example Club 1",
+            total: "33.05",
+            rank: "1",
+          },
+          {
+            name: "DOE Jane",
+            club: "Example Club 2",
+            total: "31.85",
+            rank: "2",
+          },
+          {
+            name: "SMITH Millie",
+            club: "Example Club 3",
+            total: "30.20",
+            rank: "3",
+          },
+          {
+            name: "HOWARD Catherine",
+            club: "Example Club 4",
+            total: "28.00",
+            rank: "4",
+          },
+          {
+            name: "BOND Chelsea",
+            club: "Example Club 5",
+            total: "27.35",
+            rank: "5",
+          },
+          {
+            name: "PARKES Kate",
+            club: "Example Club 6",
+            total: "25.05",
+            rank: "6",
+          },
+          {
+            name: "WHELAN Helen",
+            club: "Example Club 7",
+            total: "24.95",
+            rank: "7",
+          },
+          {
+            name: "HALPIN Hannah",
+            club: "Example Club 8",
+            total: "23.20",
+            rank: "8",
+          },
+          {
+            name: "MURNAGHAN Wendy",
+            club: "Example Club 9",
+            total: "14.55",
+            rank: "9",
+          },
+          {
+            name: "BILOTTA Maria",
+            club: "Example Club 10",
+            total: "5.05",
+            rank: "10",
+          },
+        ],
+      },
+      {
+        category: "TRA Youth Men",
+        round: "Q2",
+        competitors: [
+          {
+            name: "SMITH Michael",
+            club: "Example Club 1",
+            total: "31.05",
+            rank: "1",
+          },
+          {
+            name: "DOE John",
+            club: "Example Club 2",
+            total: "30.85",
+            rank: "2",
+          },
+          {
+            name: "SAMUELS Mark",
+            club: "Example Club 3",
+            total: "30.10",
+            rank: "3",
+          },
+          {
+            name: "HART Charlie",
+            club: "Example Club 4",
+            total: "23.40",
+            rank: "4",
+          },
+          {
+            name: "BROWN Connor",
+            club: "Example Club 5",
+            total: "22.05",
+            rank: "5",
+          },
+          {
+            name: "POWERS Kieran",
+            club: "Example Club 6",
+            total: "14.35",
+            rank: "6",
+          },
+          {
+            name: "JONES Dan",
+            club: "Example Club 7",
+            total: "12.10",
+            rank: "7",
+          },
+          {
+            name: "COMLEY Nick",
+            club: "Example Club 8",
+            total: "7.30",
+            rank: "8",
+          },
+          {
+            name: "SACH Will",
+            club: "Example Club 9",
+            total: "4.35",
+            rank: "9",
+          },
+          {
+            name: "WEAVER Joe",
+            club: "Example Club 10",
+            total: "0.00",
+            rank: "10",
+          },
+        ],
+      },
+    ],
   });
 });
 
@@ -710,17 +1244,17 @@ app.get("/api/eventInfo", (req, res) => {
   });
 });
 
-app.get('/api/videoFile', (req, res) => {
+app.get("/api/videoFile", (req, res) => {
   const event = req.query.event;
   const fileName = req.query.fileName;
   const variant = req.query.variant;
-  const directory = "\\\\10.0.0.4\\Video-Drive"
+  const directory = "\\\\10.0.0.4\\Video-Drive";
   const filePath = path.join(directory, event, variant, fileName);
-  res.sendFile(filePath, err => {
-      if (err) {
-          console.error('File failed to send:', err);
-          res.status(500).send('Error sending file');
-      }
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      console.error("File failed to send:", err);
+      res.status(500).send("Error sending file");
+    }
   });
 });
 
