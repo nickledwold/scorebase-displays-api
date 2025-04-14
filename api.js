@@ -997,7 +997,7 @@ app.get("/api/onlineResults", async (req, res) => {
     query = `SELECT * FROM "${schema}"."ExerciseDeductions" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
     const deductionRows = await executeQuery(query, [categoryId]);
     
-    // Query 7: Check if ExerciseHDDeductions table exists
+    // Check if tables exist (only need to check one since they were part of same migration)
     query = `SELECT EXISTS (
       SELECT 1
       FROM information_schema.tables
@@ -1006,14 +1006,21 @@ app.get("/api/onlineResults", async (req, res) => {
     ) AS exists;`;
     const existsRows = await executeQuery(query, []);
     
-    // Query 8: Get HD deductions ONLY if table exists
-    let hdDeductionRows = [];
-    const tableExists = existsRows[0].exists;
-    console.log("HD Deductions table exists:", tableExists);
+    const tablesExist = existsRows[0].exists;
+    console.log("HD Deductions and TS Values tables exist:", tablesExist);
     
-    if (tableExists) {
+    // Get data from optional tables only if they exist
+    let hdDeductionRows = [];
+    let tsValueRows = [];
+    
+    if (tablesExist) {
+      // Get HD deductions
       query = `SELECT * FROM "${schema}"."ExerciseHDDeductions" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
       hdDeductionRows = await executeQuery(query, [categoryId]);
+      
+      // Get TS Values
+      query = `SELECT * FROM "${schema}"."ExerciseTSValues" where "CompetitorId" IN (SELECT "CompetitorId" FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE);`;
+      tsValueRows = await executeQuery(query, [categoryId]);
     }
 
     // Process competitor data
@@ -1044,7 +1051,12 @@ app.get("/api/onlineResults", async (req, res) => {
       const competitorDeductions = deductionRows.filter(
         deduction => deduction.CompetitorId === competitorData.CompetitorId
       );
-      const competitorHDDeductions = tableExists ? hdDeductionRows.filter(
+      
+      // Only filter these if tables exist
+      const competitorTSValues = tablesExist ? tsValueRows.filter(
+        tsValue => tsValue.CompetitorId === competitorData.CompetitorId
+      ) : [];
+      const competitorHDDeductions = tablesExist ? hdDeductionRows.filter(
         deduction => deduction.CompetitorId === competitorData.CompetitorId
       ) : [];
 
@@ -1091,8 +1103,18 @@ app.get("/api/onlineResults", async (req, res) => {
             exerciseData.Deductions = exerciseDeductions;
           }
           
-          // Only process HD deductions if the table exists
-          if (tableExists) {
+          // Only process optional data if tables exist
+          if (tablesExist) {
+            // Get exercise-specific TS Values
+            const exerciseTSValues = competitorTSValues.filter(
+              tsValue => tsValue.ExerciseNumber === exerciseData.ExerciseNumber
+            );
+            
+            if (exerciseTSValues.length > 0) {
+              exerciseData.TSValues = exerciseTSValues;
+            }
+            
+            // Get exercise-specific HD deductions
             let exerciseHDDeductions = competitorHDDeductions.filter(
               deduction => deduction.ExerciseNumber === exerciseData.ExerciseNumber
             );
