@@ -959,7 +959,7 @@ app.get("/api/onlineResults", async (req, res) => {
       });
     };
 
-    // Run these queries in parallel 
+    // Run these queries in parallel
     const [competitorRows, tablesExist] = await Promise.all([
       // Query 1: Get competitor data with the appropriate ordering
       executeQuery(
@@ -968,28 +968,31 @@ app.get("/api/onlineResults", async (req, res) => {
           : `SELECT * FROM "${schema}"."DisplayScreen" WHERE "CatId" = $1 AND "Withdrawn" IS NOT TRUE ORDER BY (CASE WHEN "CumulativeRank" IS NULL THEN 1 ELSE 0 END), "CumulativeRank", "Q1Flight", "Q1StartNo"`,
         [categoryId]
       ),
-      
+
       // Check if tables exist (only need to check one since they were part of same migration)
-      executeQuery(`SELECT EXISTS (
+      executeQuery(
+        `SELECT EXISTS (
         SELECT 1
         FROM information_schema.tables
         WHERE table_schema = '${schema}'
         AND table_name = 'ExerciseHDDeductions'
-      ) AS exists;`, []).then(rows => rows[0].exists)
+      ) AS exists;`,
+        []
+      ).then((rows) => rows[0].exists),
     ]);
-    
+
     // Skip everything if no competitors found
     if (competitorRows.length === 0) {
       return res.json([]);
     }
-    
+
     // Create the competitor ID list only once
-    const competitorIds = competitorRows.map(c => c.CompetitorId);
-    const competitorIdList = competitorIds.join(',');
-    
+    const competitorIds = competitorRows.map((c) => c.CompetitorId);
+    const competitorIdList = competitorIds.join(",");
+
     // Build all IN clauses with the array
     const whereClause = `"CompetitorId" IN (${competitorIdList})`;
-    
+
     // Run these queries in parallel
     const [
       exerciseRows,
@@ -998,97 +1001,138 @@ app.get("/api/onlineResults", async (req, res) => {
       medianRows,
       deductionRows,
       hdDeductionRows,
-      tsValueRows
+      tsValueRows,
     ] = await Promise.all([
       // Query 2: Get exercise totals
-      executeQuery(`SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC`, []),
-      
+      executeQuery(
+        `SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC`,
+        []
+      ),
+
       // Query 3: Get round totals
-      executeQuery(`SELECT * FROM "${schema}"."RoundTotals" WHERE ${whereClause}`, []),
-      
+      executeQuery(
+        `SELECT * FROM "${schema}"."RoundTotals" WHERE ${whereClause}`,
+        []
+      ),
+
       // Query 4: Get videos
-      executeQuery(`SELECT * FROM "${schema}"."ExerciseVideos" WHERE ${whereClause} ORDER BY "Angle" ASC`, []),
-      
+      executeQuery(
+        `SELECT * FROM "${schema}"."ExerciseVideos" WHERE ${whereClause} ORDER BY "Angle" ASC`,
+        []
+      ),
+
       // Query 5: Get medians
-      executeQuery(`SELECT * FROM "${schema}"."ExerciseMedians" WHERE ${whereClause}`, []),
-      
+      executeQuery(
+        `SELECT * FROM "${schema}"."ExerciseMedians" WHERE ${whereClause}`,
+        []
+      ),
+
       // Query 6: Get deductions
-      executeQuery(`SELECT * FROM "${schema}"."ExerciseDeductions" WHERE ${whereClause}`, []),
-      
+      executeQuery(
+        `SELECT * FROM "${schema}"."ExerciseDeductions" WHERE ${whereClause}`,
+        []
+      ),
+
       // Query 7: Get HD deductions - only if table exists
-      tablesExist ? executeQuery(`SELECT * FROM "${schema}"."ExerciseHDDeductions" WHERE ${whereClause}`, []) : Promise.resolve([]),
-      
+      tablesExist
+        ? executeQuery(
+            `SELECT * FROM "${schema}"."ExerciseHDDeductions" WHERE ${whereClause}`,
+            []
+          )
+        : Promise.resolve([]),
+
       // Query 8: Get TS Values - only if table exists
-      tablesExist ? executeQuery(`SELECT * FROM "${schema}"."ExerciseTSValues" WHERE ${whereClause}`, []) : Promise.resolve([])
+      tablesExist
+        ? executeQuery(
+            `SELECT * FROM "${schema}"."ExerciseTSValues" WHERE ${whereClause}`,
+            []
+          )
+        : Promise.resolve([]),
     ]);
-    
+
     // Create lookup maps for faster data access
     const exerciseMap = new Map();
-    exerciseRows.forEach(exercise => {
+    exerciseRows.forEach((exercise) => {
       const key = exercise.CompetitorId;
       if (!exerciseMap.has(key)) {
         exerciseMap.set(key, []);
       }
       exerciseMap.get(key).push(exercise);
     });
-    
+
     const roundTotalMap = new Map();
-    roundTotalRows.forEach(roundTotal => {
-      roundTotalMap.set(roundTotal.CompetitorId, roundTotal);
+
+    roundTotalRows.forEach((roundTotal) => {
+      const { CompetitorId, Round, RoundTotal, RoundRank } = roundTotal;
+
+      if (!roundTotalMap.has(CompetitorId)) {
+        roundTotalMap.set(CompetitorId, []);
+      }
+
+      // Push the round total directly into the array for the CompetitorId
+      roundTotalMap.get(CompetitorId).push({ Round, RoundTotal, RoundRank });
     });
-    
+
     const videoMap = new Map();
-    videoRows.forEach(video => {
+    videoRows.forEach((video) => {
       const key = `${video.CompetitorId}-${video.ExerciseNumber}`;
       if (!videoMap.has(key)) {
         videoMap.set(key, []);
       }
       videoMap.get(key).push(video);
     });
-    
+
     const medianMap = new Map();
-    medianRows.forEach(median => {
+    medianRows.forEach((median) => {
       const key = `${median.CompetitorId}-${median.ExerciseNumber}`;
       if (!medianMap.has(key)) {
         medianMap.set(key, []);
       }
-      
+
       // Pre-transform the deduction number
       const transformedMedian = {
         ...median,
-        DeductionNumber: 
-          (categoryId[0] == "I" || categoryId[0] == "S") && median.DeductionNumber == 11 ? "L" :
-          categoryId[0] == "U" && median.DeductionNumber == 9 ? "L" :
-          categoryId[0] == "D" && median.DeductionNumber == 3 ? "L" :
-          median.DeductionNumber,
+        DeductionNumber:
+          (categoryId[0] == "I" || categoryId[0] == "S") &&
+          median.DeductionNumber == 11
+            ? "L"
+            : categoryId[0] == "U" && median.DeductionNumber == 9
+            ? "L"
+            : categoryId[0] == "D" && median.DeductionNumber == 3
+            ? "L"
+            : median.DeductionNumber,
       };
-      
+
       medianMap.get(key).push(transformedMedian);
     });
-    
+
     const deductionMap = new Map();
-    deductionRows.forEach(deduction => {
+    deductionRows.forEach((deduction) => {
       const key = `${deduction.CompetitorId}-${deduction.ExerciseNumber}`;
       if (!deductionMap.has(key)) {
         deductionMap.set(key, []);
       }
-      
+
       // Pre-transform the deduction number
       const transformedDeduction = {
         ...deduction,
-        DeductionNumber: 
-          (categoryId[0] == "I" || categoryId[0] == "S") && deduction.DeductionNumber == 11 ? "L" :
-          categoryId[0] == "U" && deduction.DeductionNumber == 9 ? "L" :
-          categoryId[0] == "D" && deduction.DeductionNumber == 3 ? "L" :
-          deduction.DeductionNumber,
+        DeductionNumber:
+          (categoryId[0] == "I" || categoryId[0] == "S") &&
+          deduction.DeductionNumber == 11
+            ? "L"
+            : categoryId[0] == "U" && deduction.DeductionNumber == 9
+            ? "L"
+            : categoryId[0] == "D" && deduction.DeductionNumber == 3
+            ? "L"
+            : deduction.DeductionNumber,
       };
-      
+
       deductionMap.get(key).push(transformedDeduction);
     });
-    
+
     const hdDeductionMap = new Map();
     if (tablesExist) {
-      hdDeductionRows.forEach(deduction => {
+      hdDeductionRows.forEach((deduction) => {
         const key = `${deduction.CompetitorId}-${deduction.ExerciseNumber}`;
         if (!hdDeductionMap.has(key)) {
           hdDeductionMap.set(key, []);
@@ -1096,10 +1140,10 @@ app.get("/api/onlineResults", async (req, res) => {
         hdDeductionMap.get(key).push(deduction);
       });
     }
-    
+
     const tsValueMap = new Map();
     if (tablesExist) {
-      tsValueRows.forEach(tsValue => {
+      tsValueRows.forEach((tsValue) => {
         const key = `${tsValue.CompetitorId}-${tsValue.ExerciseNumber}`;
         if (!tsValueMap.has(key)) {
           tsValueMap.set(key, []);
@@ -1107,60 +1151,70 @@ app.get("/api/onlineResults", async (req, res) => {
         tsValueMap.get(key).push(tsValue);
       });
     }
-    
+
     // Process competitor data
     for (const competitorData of competitorRows) {
       // Associate exercises with competitor
-      const competitorExercises = exerciseMap.get(competitorData.CompetitorId) || [];
+      const competitorExercises =
+        exerciseMap.get(competitorData.CompetitorId) || [];
       competitorData.Exercises = competitorExercises;
-      
+
       // Associate round totals
       if (roundTotalMap.has(competitorData.CompetitorId)) {
-        competitorData.RoundTotals = [roundTotalMap.get(competitorData.CompetitorId)];
+        competitorData.RoundTotals = roundTotalMap.get(
+          competitorData.CompetitorId
+        );
       }
-      
+
       // Process exercise data if there are exercises
       if (competitorExercises.length > 0) {
         for (const exerciseData of competitorData.Exercises) {
           const exerciseKey = `${competitorData.CompetitorId}-${exerciseData.ExerciseNumber}`;
-          
+
           // Get exercise-specific medians
           if (medianMap.has(exerciseKey)) {
             exerciseData.Medians = medianMap.get(exerciseKey);
           }
-          
+
           // Get exercise-specific deductions
           if (deductionMap.has(exerciseKey)) {
             exerciseData.Deductions = deductionMap.get(exerciseKey);
           }
-          
+
           // Only process optional data if tables exist
           if (tablesExist) {
             // Get exercise-specific TS Values
             if (tsValueMap.has(exerciseKey)) {
               exerciseData.TSValues = tsValueMap.get(exerciseKey);
             }
-            
+
             // Get exercise-specific HD deductions
             if (hdDeductionMap.has(exerciseKey)) {
               exerciseData.HDDeductions = hdDeductionMap.get(exerciseKey);
             }
           }
-          
+
           // Get exercise-specific videos
           if (videoMap.has(exerciseKey)) {
             exerciseData.Videos = videoMap.get(exerciseKey);
           }
         }
       }
-      
+
       // Remove unnecessary exercise properties
       for (let i = 1; i <= 5; i++) {
         const keysToRemove = [
-          `Ex${i}E`, `Ex${i}D`, `Ex${i}B`, `Ex${i}HD`, `Ex${i}ToF`,
-          `Ex${i}S`, `Ex${i}Pen`, `Ex${i}Total`, `Ex${i}Rank`
+          `Ex${i}E`,
+          `Ex${i}D`,
+          `Ex${i}B`,
+          `Ex${i}HD`,
+          `Ex${i}ToF`,
+          `Ex${i}S`,
+          `Ex${i}Pen`,
+          `Ex${i}Total`,
+          `Ex${i}Rank`,
         ];
-        
+
         for (const key of keysToRemove) {
           if (competitorData.hasOwnProperty(key)) {
             delete competitorData[key];
@@ -1168,10 +1222,9 @@ app.get("/api/onlineResults", async (req, res) => {
         }
       }
     }
-    
+
     // Return processed competitor data
     res.json(competitorRows);
-    
   } catch (err) {
     console.error("Error in /api/onlineResults:", err.message);
     res.status(500).json({ error: "Internal Server Error" });
