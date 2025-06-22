@@ -1023,20 +1023,20 @@ app.get("/api/onlineResults", async (req, res) => {
 
       // Query 5: Get medians
       executeQuery(
-        `SELECT * FROM "${schema}"."ExerciseMedians" WHERE ${whereClause}`,
+        `SELECT * FROM "${schema}"."ExerciseMedians" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "DeductionNumber" ASC`,
         []
       ),
 
       // Query 6: Get deductions
       executeQuery(
-        `SELECT * FROM "${schema}"."ExerciseDeductions" WHERE ${whereClause}`,
+        `SELECT * FROM "${schema}"."ExerciseDeductions" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "JudgeNumber" ASC, "DeductionNumber" ASC`,
         []
       ),
 
       // Query 7: Get HD deductions - only if table exists
       tablesExist
         ? executeQuery(
-            `SELECT * FROM "${schema}"."ExerciseHDDeductions" WHERE ${whereClause}`,
+            `SELECT * FROM "${schema}"."ExerciseHDDeductions" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "JudgeNumber" ASC, "DeductionNumber" ASC`,
             []
           )
         : Promise.resolve([]),
@@ -1044,7 +1044,7 @@ app.get("/api/onlineResults", async (req, res) => {
       // Query 8: Get TS Values - only if table exists
       tablesExist
         ? executeQuery(
-            `SELECT * FROM "${schema}"."ExerciseTSValues" WHERE ${whereClause}`,
+            `SELECT * FROM "${schema}"."ExerciseTSValues" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "SkillNumber" ASC`,
             []
           )
         : Promise.resolve([]),
