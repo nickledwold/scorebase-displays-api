@@ -15,7 +15,7 @@ if (args.length < 2) {
   process.exit(1);
 }
 
-const port = 3000;
+const port = args.length > 2 ? args[2] : 3000;
 const dbport = 5432;
 const host = args[0];
 const user = "postgres";
@@ -749,7 +749,7 @@ function transformToRankings(data) {
     // Build competitor's full name
     const name =
       row.Discipline == "TRS"
-        ? `${row.Surname1.toUpperCase()}, ${row.Surname1.toUpperCase()}`
+        ? `${row.Surname1.toUpperCase()}, ${row.Surname2.toUpperCase()}`
         : `${row.Surname1.toUpperCase()} ${row.FirstName1}`;
 
     // Add competitor info
