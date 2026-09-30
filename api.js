@@ -1287,6 +1287,66 @@ app.get("/api/eventInfo", (req, res) => {
   });
 });
 
+// One example QR code URL per panel, keyed by panel number
+// TODO: retrieve these from the database once the QR code URLs are stored there
+const examplePanelQrCodes = {
+  1: {
+    name: "Panel 1",
+    description: "Live scores and results for panel 1",
+    url: "https://scorebase.example.com/panel/1",
+  },
+  2: {
+    name: "Panel 2",
+    description: "Live scores and results for panel 2",
+    url: "https://scorebase.example.com/panel/2",
+  },
+  3: {
+    name: "Panel 3",
+    description: "Live scores and results for panel 3",
+    url: "https://scorebase.example.com/panel/3",
+  },
+  4: {
+    name: "Panel 4",
+    description: "Live scores and results for panel 4",
+    url: "https://scorebase.example.com/panel/4",
+  },
+};
+
+app.get("/api/qrCodes", (req, res) => {
+  const panelNumber = req.query.panelNumber;
+
+  // No panel number, return the QR code for every panel
+  if (isValueNullOrEmpty(panelNumber)) {
+    const qrCodes = Object.keys(examplePanelQrCodes).map((panel) => ({
+      panel: Number(panel),
+      ...examplePanelQrCodes[panel],
+    }));
+    res.json({ qrCodes: qrCodes });
+    return;
+  }
+
+  if (isNaN(panelNumber)) {
+    res.status(400).json({ error: "panelNumber must be a number" });
+    return;
+  }
+
+  const panel = Number(panelNumber);
+  const panelQrCode = examplePanelQrCodes[panel];
+
+  if (!panelQrCode) {
+    // Unknown panel, fall back to a generated example URL for that panel
+    res.json({
+      panel: panel,
+      name: `Panel ${panel}`,
+      description: `Live scores and results for panel ${panel}`,
+      url: `https://scorebase.example.com/panel/${panel}`,
+    });
+    return;
+  }
+
+  res.json({ panel: panel, ...panelQrCode });
+});
+
 app.get("/api/videoFile", (req, res) => {
   const event = req.query.event;
   const fileName = req.query.fileName;
