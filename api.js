@@ -1347,6 +1347,197 @@ app.get("/api/qrCodes", (req, res) => {
   res.json({ panel: panel, ...panelQrCode });
 });
 
+function makeCombinedMap(rows, getKey) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = getKey(row);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  }
+  return map;
+}
+
+// Mirror of the deduction-number "L" (landing) relabelling used by /api/onlineResults,
+// applied per competitor using their own category's initial.
+function transformCombinedDeductionNumber(catInitial, deductionNumber) {
+  if ((catInitial === "I" || catInitial === "S") && deductionNumber == 11) return "L";
+  if (catInitial === "U" && deductionNumber == 9) return "L";
+  if (catInitial === "D" && deductionNumber == 3) return "L";
+  return deductionNumber;
+}
+
+// Assembly for combined results (internal displays version). `queryFn(query, params)`
+// returns a promise of rows. This mirrors the Vercel API's combinedResults util EXCEPT
+// that the online version additionally gates publication on the British Q2 SJ_SignOff.
+// Internal displays intentionally have NO such gate - results show as soon as generated.
+async function assembleCombinedResults(schema, combinedRows, queryFn) {
+  const competitorIds = [...new Set(combinedRows.map((r) => r.CompetitorId))];
+  if (competitorIds.length === 0) return [];
+  const competitorIdList = competitorIds.join(",");
+  const whereClause = `"CompetitorId" IN (${competitorIdList})`;
+  const exerciseFilter = `${whereClause} AND "ExerciseNumber" IN (1, 2)`;
+
+  const tablesExist = (
+    await queryFn(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'ExerciseHDDeductions') AS exists;`,
+      [schema]
+    )
+  )[0].exists;
+
+  const [
+    competitorRows,
+    exerciseRows,
+    medianRows,
+    deductionRows,
+    hdDeductionRows,
+    tsValueRows,
+    videoRows,
+  ] = await Promise.all([
+    queryFn(
+      `SELECT "CompetitorId", "FirstName1", "FirstName2", "Surname1", "Surname2", "Nation", "DisplayClub", "CatId" FROM "${schema}"."Competitors" WHERE ${whereClause}`,
+      []
+    ),
+    queryFn(
+      `SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE ${exerciseFilter} ORDER BY "ExerciseNumber" ASC`,
+      []
+    ),
+    queryFn(
+      `SELECT * FROM "${schema}"."ExerciseMedians" WHERE ${exerciseFilter} ORDER BY "ExerciseNumber" ASC, "DeductionNumber" ASC`,
+      []
+    ),
+    queryFn(
+      `SELECT * FROM "${schema}"."ExerciseDeductions" WHERE ${exerciseFilter} ORDER BY "ExerciseNumber" ASC, "JudgeNumber" ASC, "DeductionNumber" ASC`,
+      []
+    ),
+    tablesExist
+      ? queryFn(
+          `SELECT * FROM "${schema}"."ExerciseHDDeductions" WHERE ${exerciseFilter} ORDER BY "ExerciseNumber" ASC, "JudgeNumber" ASC, "DeductionNumber" ASC`,
+          []
+        )
+      : Promise.resolve([]),
+    tablesExist
+      ? queryFn(
+          `SELECT * FROM "${schema}"."ExerciseTSValues" WHERE ${exerciseFilter} ORDER BY "ExerciseNumber" ASC, "SkillNumber" ASC`,
+          []
+        )
+      : Promise.resolve([]),
+    queryFn(
+      `SELECT * FROM "${schema}"."ExerciseVideos" WHERE ${whereClause} ORDER BY "Angle" ASC`,
+      []
+    ),
+  ]);
+
+  const competitorMap = new Map(competitorRows.map((c) => [c.CompetitorId, c]));
+  const exerciseMap = makeCombinedMap(exerciseRows, (r) => r.CompetitorId);
+  const medianMap = makeCombinedMap(medianRows, (r) => `${r.CompetitorId}-${r.ExerciseNumber}`);
+  const deductionMap = makeCombinedMap(deductionRows, (r) => `${r.CompetitorId}-${r.ExerciseNumber}`);
+  const hdDeductionMap = makeCombinedMap(hdDeductionRows, (r) => `${r.CompetitorId}-${r.ExerciseNumber}`);
+  const tsValueMap = makeCombinedMap(tsValueRows, (r) => `${r.CompetitorId}-${r.ExerciseNumber}`);
+  const videoMap = makeCombinedMap(videoRows, (r) => `${r.CompetitorId}-${r.ExerciseNumber}`);
+
+  const groupsMap = new Map();
+  for (const cr of combinedRows) {
+    const key = `${cr.Discipline}|${cr.GroupName}`;
+    if (!groupsMap.has(key)) {
+      groupsMap.set(key, {
+        discipline: cr.Discipline,
+        groupName: cr.GroupName,
+        excludeBonus: cr.ExcludeBonus,
+        competitors: [],
+      });
+    }
+    const group = groupsMap.get(key);
+    const info = competitorMap.get(cr.CompetitorId) || {};
+    const catInitial = info.CatId ? String(info.CatId)[0] : null;
+
+    const exercises = (exerciseMap.get(cr.CompetitorId) || []).map((ex) => {
+      const exKey = `${cr.CompetitorId}-${ex.ExerciseNumber}`;
+      const out = { ...ex };
+      // Youth TUM ranks with bonus excluded; make the displayed breakdown consistent.
+      if (cr.ExcludeBonus) {
+        const bonus = parseFloat(out.Bonus) || 0;
+        const total = parseFloat(out.Total) || 0;
+        out.Total = (total - bonus).toFixed(2);
+        out.Bonus = 0;
+      }
+      out.Medians = (medianMap.get(exKey) || [])
+        .filter((m) => m.MedSum !== null)
+        .map((m) => ({ ...m, DeductionNumber: transformCombinedDeductionNumber(catInitial, m.DeductionNumber) }));
+      out.Deductions = (deductionMap.get(exKey) || []).map((d) => ({
+        ...d,
+        DeductionNumber: transformCombinedDeductionNumber(catInitial, d.DeductionNumber),
+      }));
+      out.HDDeductions = hdDeductionMap.get(exKey) || [];
+      out.TSValues = tsValueMap.get(exKey) || [];
+      out.Videos = videoMap.get(exKey) || [];
+      return out;
+    });
+
+    group.competitors.push({
+      CompetitorId: cr.CompetitorId,
+      FirstName1: info.FirstName1,
+      FirstName2: info.FirstName2,
+      Surname1: info.Surname1,
+      Surname2: info.Surname2,
+      Nation: info.Nation,
+      DisplayClub: info.DisplayClub,
+      Discipline: cr.Discipline,
+      GroupName: cr.GroupName,
+      CombinedTotal: cr.CombinedTotal,
+      Rank: cr.Rank,
+      DisplayRank: cr.DisplayRank,
+      Exercises: exercises,
+    });
+  }
+  return [...groupsMap.values()];
+}
+
+// Combined NAGF qualification results (the merged ranking across the two age sub-categories).
+// Stored in the NAGF schema's "CombinedResults" table and published separately from the
+// individual category results. Returns [] when there are no combined results for the schema.
+app.get("/api/combinedResults", async (req, res) => {
+  try {
+    const discipline = req.query.discipline;
+    const groupName = req.query.group;
+
+    let combinedQuery = `SELECT * FROM "${schema}"."CombinedResults"`;
+    const combinedParams = [];
+    const conditions = [];
+    if (discipline) {
+      combinedParams.push(discipline);
+      conditions.push(`"Discipline" = $${combinedParams.length}`);
+    }
+    if (groupName) {
+      combinedParams.push(groupName);
+      conditions.push(`"GroupName" = $${combinedParams.length}`);
+    }
+    if (conditions.length > 0) {
+      combinedQuery += ` WHERE ${conditions.join(" AND ")}`;
+    }
+    combinedQuery += ` ORDER BY "Discipline", "GroupName", "Rank"`;
+
+    let combinedRows;
+    try {
+      combinedRows = await performDatabaseQueryWithRetryAsync(combinedQuery, combinedParams);
+    } catch (err) {
+      // Table absent (no combined competition has run) - treat as no results.
+      return res.json([]);
+    }
+
+    if (!combinedRows || combinedRows.length === 0) {
+      return res.json([]);
+    }
+
+    const groups = await assembleCombinedResults(schema, combinedRows, (query, params) =>
+      performDatabaseQueryWithRetryAsync(query, params)
+    );
+    res.json(groups);
+  } catch (err) {
+    console.error("Error in /api/combinedResults:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 app.get("/api/videoFile", (req, res) => {
   const event = req.query.event;
   const fileName = req.query.fileName;
