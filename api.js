@@ -1539,6 +1539,169 @@ app.get("/api/combinedResults", async (req, res) => {
   }
 });
 
+app.get("/api/competitorNamesAndClubs", (req, res) => {
+  const query = `SELECT
+        concat("FirstName1", ' ', "Surname1") AS CompetitorOne,
+        concat("FirstName2", ' ', "Surname2") AS CompetitorTwo,
+        "Club"
+      FROM "${schema}"."Competitors"
+      WHERE "Withdrawn" IS NOT TRUE`;
+
+  performDatabaseQueryWithRetry(query, [], (err, rows) => {
+    if (err) {
+      console.error("Error executing query:", err.message);
+      res.status(500).json({ error: "Internal Server Error" });
+    } else {
+      res.json(rows);
+    }
+  });
+});
+
+app.get("/api/searchResults", async (req, res) => {
+  try {
+    const searchTerm = req.query.searchTerm || "";
+    const exact = req.query.exact === "true";
+
+    const competitorQuery = exact
+      ? `SELECT * FROM "${schema}"."Competitors" WHERE (concat("FirstName1",' ',"Surname1") = $1 OR concat("FirstName2",' ',"Surname2") = $1 OR "Club" = $1) AND "Withdrawn" IS NOT TRUE`
+      : `SELECT * FROM "${schema}"."Competitors" WHERE (concat("FirstName1",' ',"Surname1") ILIKE $1 OR concat("FirstName2",' ',"Surname2") ILIKE $1 OR "Club" ILIKE $1) AND "Withdrawn" IS NOT TRUE`;
+
+    const [competitorRows, tablesExist] = await Promise.all([
+      performDatabaseQueryWithRetryAsync(competitorQuery, [
+        exact ? searchTerm : `%${searchTerm}%`,
+      ]),
+      performDatabaseQueryWithRetryAsync(
+        `SELECT EXISTS (
+          SELECT 1 FROM information_schema.tables
+          WHERE table_schema = '${schema}' AND table_name = 'ExerciseHDDeductions'
+        ) AS exists;`,
+        []
+      ).then((rows) => rows[0].exists),
+    ]);
+
+    if (competitorRows.length === 0) {
+      return res.json([]);
+    }
+
+    const competitorIds = competitorRows.map((row) => row.CompetitorId);
+    const catIds = [...new Set(competitorRows.map((row) => row.CatId))];
+    const whereClause = `"CompetitorId" = ANY($1)`;
+
+    const [
+      categoryRows,
+      exerciseRows,
+      roundTotalRows,
+      videoRows,
+      medianRows,
+      deductionRows,
+      hdDeductionRows,
+      tsValueRows,
+    ] = await Promise.all([
+      performDatabaseQueryWithRetryAsync(
+        `SELECT * FROM "${schema}"."Categories" WHERE "CatId" = ANY($1)`,
+        [catIds]
+      ),
+      performDatabaseQueryWithRetryAsync(
+        `SELECT * FROM "${schema}"."DisplayScreenExerciseTotals" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC`,
+        [competitorIds]
+      ),
+      performDatabaseQueryWithRetryAsync(
+        `SELECT * FROM "${schema}"."RoundTotals" WHERE ${whereClause}`,
+        [competitorIds]
+      ),
+      performDatabaseQueryWithRetryAsync(
+        `SELECT * FROM "${schema}"."ExerciseVideos" WHERE ${whereClause} ORDER BY "Angle" ASC`,
+        [competitorIds]
+      ),
+      performDatabaseQueryWithRetryAsync(
+        `SELECT * FROM "${schema}"."ExerciseMedians" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "DeductionNumber" ASC`,
+        [competitorIds]
+      ),
+      performDatabaseQueryWithRetryAsync(
+        `SELECT * FROM "${schema}"."ExerciseDeductions" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "JudgeNumber" ASC, "DeductionNumber" ASC`,
+        [competitorIds]
+      ),
+      tablesExist
+        ? performDatabaseQueryWithRetryAsync(
+            `SELECT * FROM "${schema}"."ExerciseHDDeductions" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "JudgeNumber" ASC, "DeductionNumber" ASC`,
+            [competitorIds]
+          )
+        : Promise.resolve([]),
+      tablesExist
+        ? performDatabaseQueryWithRetryAsync(
+            `SELECT * FROM "${schema}"."ExerciseTSValues" WHERE ${whereClause} ORDER BY "ExerciseNumber" ASC, "SkillNumber" ASC`,
+            [competitorIds]
+          )
+        : Promise.resolve([]),
+    ]);
+
+    const groupByKey = (list, keyFn) =>
+      list.reduce((acc, item) => {
+        const key = keyFn(item);
+        acc[key] = acc[key] || [];
+        acc[key].push(item);
+        return acc;
+      }, {});
+
+    // Landing element is displayed as "L" (matches /api/onlineResults)
+    const transformDeductionNumber = (catId, deductionNumber) =>
+      (["I", "S"].includes(catId[0]) && deductionNumber == 11) ||
+      (catId[0] == "U" && deductionNumber == 9) ||
+      (catId[0] == "D" && deductionNumber == 3)
+        ? "L"
+        : deductionNumber;
+
+    const exerciseKey = (x) => `${x.CompetitorId}-${x.ExerciseNumber}`;
+    const categoryMap = Object.fromEntries(
+      categoryRows.map((cat) => [cat.CatId, cat])
+    );
+    const exerciseMap = groupByKey(exerciseRows, (x) => x.CompetitorId);
+    const roundTotalMap = groupByKey(roundTotalRows, (x) => x.CompetitorId);
+    const videoMap = groupByKey(videoRows, exerciseKey);
+    const medianMap = groupByKey(
+      medianRows.filter((m) => m.MedSum !== null),
+      exerciseKey
+    );
+    const deductionMap = groupByKey(deductionRows, exerciseKey);
+    const hdDeductionMap = groupByKey(hdDeductionRows, exerciseKey);
+    const tsValueMap = groupByKey(tsValueRows, exerciseKey);
+
+    for (const competitor of competitorRows) {
+      const catId = competitor.CatId;
+      competitor.Category = categoryMap[catId] || null;
+      competitor.Exercises = exerciseMap[competitor.CompetitorId] || [];
+      competitor.RoundTotals = (roundTotalMap[competitor.CompetitorId] || []).map(
+        ({ Round, RoundTotal, RoundRank }) => ({ Round, RoundTotal, RoundRank })
+      );
+
+      for (const exercise of competitor.Exercises) {
+        const key = `${competitor.CompetitorId}-${exercise.ExerciseNumber}`;
+        exercise.Medians = (medianMap[key] || []).map((median) => ({
+          ...median,
+          DeductionNumber: transformDeductionNumber(catId, median.DeductionNumber),
+        }));
+        exercise.Deductions = (deductionMap[key] || []).map((deduction) => ({
+          ...deduction,
+          DeductionNumber: transformDeductionNumber(
+            catId,
+            deduction.DeductionNumber
+          ),
+        }));
+        if (tablesExist) {
+          exercise.HDDeductions = hdDeductionMap[key] || [];
+          exercise.TSValues = tsValueMap[key] || [];
+        }
+        exercise.Videos = videoMap[key] || [];
+      }
+    }
+
+    res.json(competitorRows);
+  } catch (err) {
+    console.error("Error in /api/searchResults:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 app.get("/api/videoFile", (req, res) => {
   const event = req.query.event;
   const fileName = req.query.fileName;
