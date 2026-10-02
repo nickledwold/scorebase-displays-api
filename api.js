@@ -1486,6 +1486,7 @@ async function assembleCombinedResults(schema, combinedRows, queryFn) {
       CombinedTotal: cr.CombinedTotal,
       Rank: cr.Rank,
       DisplayRank: cr.DisplayRank,
+      QualificationStatus: cr.QualificationStatus,
       Exercises: exercises,
     });
   }
