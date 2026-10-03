@@ -1287,65 +1287,111 @@ app.get("/api/eventInfo", (req, res) => {
   });
 });
 
-// One example QR code URL per panel, keyed by panel number
-// TODO: retrieve these from the database once the QR code URLs are stored there
-const examplePanelQrCodes = {
-  1: {
-    name: "Panel 1",
-    description: "Live scores and results for panel 1",
-    url: "https://scorebase.example.com/panel/1",
-  },
-  2: {
-    name: "Panel 2",
-    description: "Live scores and results for panel 2",
-    url: "https://scorebase.example.com/panel/2",
-  },
-  3: {
-    name: "Panel 3",
-    description: "Live scores and results for panel 3",
-    url: "https://scorebase.example.com/panel/3",
-  },
-  4: {
-    name: "Panel 4",
-    description: "Live scores and results for panel 4",
-    url: "https://scorebase.example.com/panel/4",
-  },
-};
-
-app.get("/api/qrCodes", (req, res) => {
+// QR code for the competitor currently shown on each panel. When a panel's Status is 1 the
+// NextToCompete fields identify the competitor, and when it is 0 the LastToCompete fields do.
+// That competitor is matched to Competitors on name, club, discipline and category, then
+// joined to CompetitorQrCodes on CompetitorId when that table exists.
+app.get("/api/qrCodes", async (req, res) => {
   const panelNumber = req.query.panelNumber;
 
-  // No panel number, return the QR code for every panel
-  if (isValueNullOrEmpty(panelNumber)) {
-    const qrCodes = Object.keys(examplePanelQrCodes).map((panel) => ({
-      panel: Number(panel),
-      ...examplePanelQrCodes[panel],
-    }));
-    res.json({ qrCodes: qrCodes });
-    return;
-  }
-
-  if (isNaN(panelNumber)) {
+  if (!isValueNullOrEmpty(panelNumber) && isNaN(panelNumber)) {
     res.status(400).json({ error: "panelNumber must be a number" });
     return;
   }
 
-  const panel = Number(panelNumber);
-  const panelQrCode = examplePanelQrCodes[panel];
+  try {
+    const qrTableExists = await performDatabaseQueryWithRetryAsync(
+      `SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = $1 AND table_name = 'CompetitorQrCodes'
+      ) AS exists;`,
+      [schema]
+    ).then((rows) => rows[0].exists);
 
-  if (!panelQrCode) {
-    // Unknown panel, fall back to a generated example URL for that panel
-    res.json({
-      panel: panel,
-      name: `Panel ${panel}`,
-      description: `Live scores and results for panel ${panel}`,
-      url: `https://scorebase.example.com/panel/${panel}`,
-    });
-    return;
+    let query = `SELECT p."PanelNo", c."CompetitorId", c."FirstName1", c."Surname1", c."FirstName2", c."Surname2",
+        c."DisplayClub", cat."Discipline", cat."Category",
+        ${qrTableExists ? `qr."QrCodeUrl"` : `NULL AS "QrCodeUrl"`}
+      FROM (
+        SELECT "PanelNo",
+          CASE "Status" WHEN 1 THEN "NextToCompeteFirstName1" WHEN 0 THEN "LastToCompeteFirstName1" END AS "FirstName1",
+          CASE "Status" WHEN 1 THEN "NextToCompeteSurname1" WHEN 0 THEN "LastToCompeteSurname1" END AS "Surname1",
+          CASE "Status" WHEN 1 THEN "NextToCompeteFirstName2" WHEN 0 THEN "LastToCompeteFirstName2" END AS "FirstName2",
+          CASE "Status" WHEN 1 THEN "NextToCompeteSurname2" WHEN 0 THEN "LastToCompeteSurname2" END AS "Surname2",
+          CASE "Status" WHEN 1 THEN "NextToCompeteClub" WHEN 0 THEN "LastToCompeteClub" END AS "Club",
+          CASE "Status" WHEN 1 THEN "NextToCompeteDiscipline" WHEN 0 THEN "LastToCompeteDiscipline" END AS "Discipline",
+          CASE "Status" WHEN 1 THEN "NextToCompeteCategory" WHEN 0 THEN "LastToCompeteCategory" END AS "Category"
+        FROM "${schema}"."PanelStatus"
+      ) p
+      LEFT JOIN (
+        "${schema}"."Competitors" c
+        INNER JOIN "${schema}"."Categories" cat ON c."CatId" = cat."CatId"
+      ) ON c."Withdrawn" IS NOT TRUE
+        AND c."FirstName1" = p."FirstName1"
+        AND c."Surname1" = p."Surname1"
+        AND COALESCE(c."FirstName2", '') = COALESCE(p."FirstName2", '')
+        AND COALESCE(c."Surname2", '') = COALESCE(p."Surname2", '')
+        AND c."Club" = p."Club"
+        AND cat."Discipline" = p."Discipline"
+        AND cat."Category" = p."Category"`;
+    if (qrTableExists) {
+      query += `
+      LEFT JOIN "${schema}"."CompetitorQrCodes" qr ON qr."CompetitorId" = c."CompetitorId"`;
+    }
+    const params = [];
+    if (!isValueNullOrEmpty(panelNumber)) {
+      query += ` WHERE p."PanelNo"::int = $1`;
+      params.push(Number(panelNumber));
+    }
+    query += ` ORDER BY p."PanelNo"::int ASC`;
+
+    const rows = await performDatabaseQueryWithRetryAsync(query, params);
+    const qrCodes = rows.map((row) => ({
+      panel: Number(row.PanelNo),
+      competitorId: row.CompetitorId ?? null,
+      competitor:
+        row.CompetitorId != null
+          ? {
+              name: formatQrCompetitorName(row),
+              club: (row.DisplayClub || "").trim(),
+              discipline: (row.Discipline || "").trim(),
+              category: (row.Category || "").trim(),
+            }
+          : null,
+      qrCodeUrl: row.QrCodeUrl || null,
+    }));
+
+    if (isValueNullOrEmpty(panelNumber)) {
+      res.json({ qrCodes: qrCodes });
+    } else {
+      res.json(
+        qrCodes[0] || {
+          panel: Number(panelNumber),
+          competitorId: null,
+          competitor: null,
+          qrCodeUrl: null,
+        }
+      );
+    }
+  } catch (err) {
+    console.error("Error in /api/qrCodes:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
   }
-
-  res.json({ panel: panel, ...panelQrCode });
 });
+
+// "First Surname", or "First Surname & First Surname" for synchro pairs
+function formatQrCompetitorName(row) {
+  const fullName = (firstName, surname) =>
+    [firstName, surname]
+      .map((part) => (part || "").trim())
+      .filter((part) => part)
+      .join(" ");
+  return [
+    fullName(row.FirstName1, row.Surname1),
+    fullName(row.FirstName2, row.Surname2),
+  ]
+    .filter((name) => name)
+    .join(" & ");
+}
 
 function makeCombinedMap(rows, getKey) {
   const map = new Map();
